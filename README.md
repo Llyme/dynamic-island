@@ -27,11 +27,10 @@ Right-click the island to pin or unpin it. Settings are in the tray icon's menu.
 
 ## Website
 
-`docs/nadi/` is a static showcase page (one HTML file, no build step, relative links only). To publish it
-from this repository, set GitHub Pages to deploy from the `main` branch and the `/docs` folder; the page is
-then at `https://<user>.github.io/<repository>/nadi/`. To serve it at `https://<user>.github.io/nadi/`
-instead, copy the `docs/nadi/` folder into the `<user>.github.io` repository. `?s=hub`, `?s=media` and the
-like open the demo island in a given state.
+`docs/index.html` is a static showcase page (one HTML file, no build step, relative links only). To publish
+it, set GitHub Pages to deploy from the `main` branch and the `/docs` folder; the page is then at
+`https://<user>.github.io/<repository>/`. `?s=hub`, `?s=media` and the like open the demo island in a
+given state.
 
 ## Requirements
 

@@ -25,6 +25,14 @@ It is Windows-only for now. The goal is to stay light: it should never make the 
 To call the island, rest the cursor on the top edge of a monitor: a glow builds up, and the island lands.
 Right-click the island to pin or unpin it. Settings are in the tray icon's menu.
 
+## Website
+
+`docs/nadi/` is a static showcase page (one HTML file, no build step, relative links only). To publish it
+from this repository, set GitHub Pages to deploy from the `main` branch and the `/docs` folder; the page is
+then at `https://<user>.github.io/<repository>/nadi/`. To serve it at `https://<user>.github.io/nadi/`
+instead, copy the `docs/nadi/` folder into the `<user>.github.io` repository. `?s=hub`, `?s=media` and the
+like open the demo island in a given state.
+
 ## Requirements
 
 - Windows 10 or 11 (with the WebView2 runtime, which is part of Windows 11)

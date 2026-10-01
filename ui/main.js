@@ -830,7 +830,10 @@ function paintBleed() {
   bleedCtx.setTransform(1, 0, 0, 1, 0, 0);
   bleedCtx.globalCompositeOperation = "source-over";
   bleedCtx.clearRect(0, 0, bleedCanvas.width, bleedCanvas.height);
-  bleedCtx.drawImage(vizCanvas, x, y, w, h);
+  // the light has to exist as far out as the mask lets it reach (or the mask's soft edge is cut
+  // off where the picture ends): the aura is stretched over the island grown by the full reach
+  const ext = Math.max(grow, Math.min(cursorPad - 2, reach * 2.2));
+  bleedCtx.drawImage(vizCanvas, (r.left - ext) * S, (r.top - ext) * S, (r.width + 2 * ext) * S, (r.height + 2 * ext) * S);
   bleedCtx.globalCompositeOperation = "destination-in";
   bleedCtx.drawImage(maskCanvas, 0, 0);
   bleedCtx.globalCompositeOperation = "source-over";

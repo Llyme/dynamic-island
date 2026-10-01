@@ -27,10 +27,16 @@ Right-click the island to pin or unpin it. Settings are in the tray icon's menu.
 
 ## Website
 
-`docs/index.html` is a static showcase page (one HTML file, no build step, relative links only). To publish
-it, set GitHub Pages to deploy from the `main` branch and the `/docs` folder; the page is then at
-`https://<user>.github.io/<repository>/`. `?s=hub`, `?s=media` and the like open the demo island in a
-given state.
+`docs/index.html` is a static showcase page with a live demo: the app's own frontend (`ui/`) runs in an iframe
+on a mock desktop. `docs/demo/backend.js` is a JavaScript port of the Rust window logic (springs, edge
+dwell, notification queue, settings) and `docs/demo/world.js` simulates the PC the island watches (media,
+game, downloads, Claude Code sessions...), so what you see and feel there is what the app does.
+
+`docs/demo/ui/` is a copy of `ui/`. After changing the app's UI, run `docs/demo/sync.ps1` to refresh it.
+
+To publish, set GitHub Pages to deploy from the `main` branch and the `/docs` folder; the page is then at
+`https://<user>.github.io/<repository>/`. To try it locally, serve the folder (`python -m http.server` in `docs`):
+the frame does not load from `file://`.
 
 ## Requirements
 

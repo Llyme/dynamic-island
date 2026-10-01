@@ -820,8 +820,8 @@ fn spawn_edge_poll(window: WebviewWindow) {
                 && (cy as f64) >= pos_y
                 && (cy as f64) < pos_y + win_h;
             // pinned and left alone for the hide delay: it shrinks (and grows back when touched)
-            // (a notification banner or a session pill counts as being looked at: it never shrinks)
-            let brief_up = matches!(current_view, PillView::Notification | PillView::Brief);
+            // (a notification banner, a session pill or the usage peek counts as being looked at: it never shrinks)
+            let brief_up = matches!(current_view, PillView::Notification | PillView::Brief | PillView::UsagePeek);
             if user_pin && !hovering && !dragging && !brief_up {
                 pin_idle_ticks += (real_dt / dt).round().max(1.0) as u64;
             } else {
@@ -829,6 +829,7 @@ fn spawn_edge_poll(window: WebviewWindow) {
             }
             let shrink_pct = state.pin_shrink.load(Ordering::Relaxed);
             let shrunk = user_pin
+                && !brief_up
                 && shrink_pct < 100
                 && pin_idle_ticks >= (state.idle_hide_ms.load(Ordering::Relaxed) / EDGE_POLL_MS).max(1);
             let mut shown = state.shown.load(Ordering::Relaxed);

@@ -1,0 +1,2700 @@
+/* Expanded island ("hub"): minimalist, borderless, springy.
+   --spring overshoots on purpose -- every transform/size change lands with a
+   little bounce, matching the Rust-side window spring. */
+:root {
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --accent: #5ac88c;
+  --accent-rgb: 90, 200, 140;
+  --accent-deep: #3a8f63;
+  --accent-light-rgb: 120, 225, 170;
+  --fg: #f2f2f5;
+  --fg-dim: #9a9aa2;
+  --fg-mute: #6a6a72;
+  --card: rgba(255, 255, 255, 0.035);
+}
+
+#pill {
+  transition:
+    border-radius 0.55s var(--spring),
+    opacity 0.22s ease-out,
+    transform 0.5s var(--spring);
+}
+
+/* hide: the pill tucks up while fading and shrinking a touch (Rust slides the window) */
+#pill.hiding {
+  opacity: 0;
+  transform: scale(0.9);
+  transform-origin: 50% 0;
+  transition:
+    border-radius 0.55s var(--spring),
+    opacity 0.42s cubic-bezier(0.5, 0, 0.9, 0.5),
+    transform 0.45s cubic-bezier(0.5, 0, 0.9, 0.5);
+}
+
+#hub {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 28px;
+  overflow: hidden;
+  color: var(--fg);
+  font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  cursor: default;
+}
+
+#hub.hidden {
+  display: none;
+}
+
+/* ---- header: clock | eyes | stat rings ---- */
+#hub-head {
+  position: relative;
+  flex: none;
+  height: 76px;
+}
+
+#hub-eyes {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#hub-clock {
+  position: absolute;
+  left: 24px;
+  top: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+
+#hub-time {
+  font-size: 26px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+#hub-date {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-mute);
+}
+
+#hub-rings {
+  position: absolute;
+  right: 22px;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ring-wrap {
+  display: block;
+  width: 18px;
+  height: 18px;
+  cursor: default;
+  transition: transform 0.4s var(--spring);
+}
+
+.ring-wrap:hover {
+  transform: scale(1.3);
+}
+
+.ring-wrap.clickable {
+  cursor: pointer;
+}
+
+.ring-wrap.clickable:active {
+  transform: scale(0.85);
+}
+
+.ring-wrap.hidden {
+  display: none;
+}
+
+.ring-wrap svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ring-wrap .ring-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 2;
+}
+
+.ring-wrap .ring-fg {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.6s var(--spring);
+}
+
+/* ---- scrolling body ---- */
+#hub-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 2px 20px 20px; /* bottom == sides, so the last card sits evenly in the frame */
+  overflow-y: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 16px), transparent 100%);
+}
+
+#hub-body::-webkit-scrollbar {
+  display: none;
+}
+
+#pane-settings.hidden,
+#pane-info.hidden,
+#pane-calendar.hidden {
+  display: none;
+}
+
+.hub-section-title {
+  margin: 20px 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.hub-section-title:first-child {
+  margin-top: 6px;
+}
+
+.notif-history-empty:empty {
+  display: none; /* an empty status line must not take padding + a flex gap */
+}
+
+.notif-history-empty {
+  padding: 2px 4px 6px;
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+
+#now-empty.hidden {
+  display: none;
+}
+
+/* ---- entrance: children spring up in a stagger (see playHubEntrance) ---- */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.enter > *,
+#hub-head.enter > * {
+  animation: rise 0.65s var(--spring) backwards;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+#hub-head.enter > #hub-eyes {
+  animation: none;
+}
+
+/* ---- cards: soft glass with a cursor-following spotlight ---- */
+/* registered so the spotlight strength can transition: it fades in when the
+   cursor enters the hub and fades out (instead of snapping off) when it leaves */
+@property --spot-a {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+#hub {
+  --spot-a: 0;
+  transition: --spot-a 0.6s ease-out;
+}
+
+#hub.spot-on {
+  --spot-a: 1;
+  transition-duration: 0.25s;
+}
+
+.spot {
+  position: relative;
+  border-radius: 16px;
+  background:
+    radial-gradient(170px circle at var(--mx, -400px) var(--my, -400px), rgba(var(--accent-rgb), calc(0.14 * var(--spot-a))), transparent 70%),
+    var(--card);
+  transition: transform 0.45s var(--spring);
+}
+
+.spot:hover {
+  transform: scale(1.012);
+}
+
+.spot:active {
+  transform: scale(0.985);
+}
+
+.now-card {
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+#now-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#now-cards .now-card {
+  margin-bottom: 0;
+}
+
+#hub-media.hidden {
+  display: none;
+}
+
+.now-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.now-icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: #2c2c30;
+}
+
+.now-icon.glyph,
+.now-icon.tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.now-icon.glyph {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+.now-icon.tile {
+  font-size: 12px;
+  font-weight: 800;
+  color: #0e0e10;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+}
+
+.now-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.now-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.now-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.now-total {
+  flex: none;
+  text-align: right;
+}
+
+.now-total-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.now-total-label {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--fg-mute);
+}
+
+.now-controls {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.now-controls button svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+.now-controls button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #d8d8dc;
+  font-size: 12px;
+  cursor: pointer;
+  transition: transform 0.4s var(--spring), background 0.2s, color 0.2s;
+}
+
+.now-controls button:hover {
+  transform: scale(1.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.now-controls button:active {
+  transform: scale(0.88);
+}
+
+.now-controls #hub-media-play {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.now-controls button.hidden {
+  display: none;
+}
+
+.now-seek {
+  margin-top: 12px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  overflow: hidden;
+  transition: height 0.3s var(--spring);
+}
+
+.now-seek:hover {
+  height: 6px;
+}
+
+.now-seek.hidden {
+  display: none;
+}
+
+#hub-media-seek-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent-deep), var(--accent));
+}
+
+/* coding stats */
+.coding-cols {
+  display: flex;
+  gap: 18px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.coding-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.coding-item-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #d6d6da;
+}
+
+.coding-item-top .name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.coding-item-top .secs {
+  flex: none;
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+
+.coding-bar {
+  height: 3px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.coding-bar > div {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.lang-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: #d6d6da;
+}
+
+.lang-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.lang-item .name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lang-item .secs {
+  font-size: 10px;
+  color: var(--fg-mute);
+}
+
+/* ---- lists ---- */
+#calendar-events,
+#notif-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.calendar-event {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  font-size: 12px;
+  color: #e2e2e6;
+}
+
+.calendar-event-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calendar-event-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.notif-history-item {
+  padding: 11px 14px;
+}
+
+.notif-history-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e6e6ea;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notif-history-body {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notif-history-time {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--fg-mute);
+}
+
+/* ---- settings ---- */
+.hub-group {
+  padding: 2px 16px;
+  margin-bottom: 12px;
+}
+
+.hub-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  font-size: 12px;
+  color: #d8d8dc;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.hub-row:last-child {
+  border-bottom: none;
+}
+
+.hub-row-stack {
+  cursor: default;
+}
+
+.hub-row-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#set-idle-hide-delay-label,
+#set-peek-duration-label,
+#set-edge-dwell-label,
+#set-calendar-lead-label {
+  min-width: 30px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+}
+
+.hub-row input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: #34343a;
+  cursor: pointer;
+  transition: background 0.25s;
+}
+
+.hub-row input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #d8d8dc;
+  transition: transform 0.5s var(--spring), width 0.25s var(--spring), background 0.25s;
+}
+
+.hub-row input[type="checkbox"]:active::after {
+  width: 18px;
+}
+
+.hub-row input[type="checkbox"]:checked {
+  background: var(--accent);
+}
+
+.hub-row input[type="checkbox"]:checked::after {
+  transform: translateX(14px);
+  background: #0e0e10;
+}
+
+.hub-row input[type="checkbox"]:checked:active::after {
+  transform: translateX(10px);
+}
+
+.hub-row input[type="range"] {
+  appearance: none;
+  width: 92px;
+  height: 3px;
+  border-radius: 2px;
+  background: #34343a;
+  cursor: pointer;
+}
+
+.hub-row input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  transition: transform 0.4s var(--spring);
+}
+
+.hub-row input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.3);
+}
+
+.hub-row input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(0.9);
+}
+
+
+
+/* ---- tooltip: one floating glass bubble that springs in (see initTooltips) ---- */
+#tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 50;
+  max-width: 230px;
+  padding: 7px 11px;
+  border-radius: 11px;
+  background: rgba(36, 36, 41, 0.97);
+  color: var(--fg);
+  font: 500 11px/1.35 "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(var(--tip-shift, 4px)) scale(0.86);
+  transition: opacity 0.07s ease, transform 0.2s var(--spring);
+}
+
+#tip.show {
+  opacity: 1;
+  transform: none;
+}
+
+.tip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: normal; /* long explanations (adopted titles) wrap inside the bubble */
+}
+
+.tip-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.tip-sub {
+  margin-top: 2px;
+  font-weight: 400;
+  color: var(--fg-dim);
+}
+
+/* ---- info pane: one unified list (media, activity, calendar, notifications) ---- */
+#pane-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+#pane-info.hidden {
+  display: none;
+}
+
+/* the group containers dissolve so their cards join the one list */
+.flat {
+  display: contents;
+}
+
+#info-empty.hidden {
+  display: none;
+}
+
+#info-empty {
+  padding-top: 18px;
+  text-align: center;
+}
+
+.now-card {
+  margin-bottom: 0;
+}
+
+.enter > .flat > * {
+  animation: rise 0.65s var(--spring) backwards;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+/* media buttons: no backgrounds, just the glyph (scale + brighten on hover) */
+.now-controls button:hover,
+.now-controls #hub-media-play {
+  background: transparent;
+}
+
+.now-icon.hidden {
+  display: none;
+}
+
+/* ---- clock is a button: click swaps the cards for the calendar ---- */
+#hub-clock {
+  cursor: pointer;
+  padding: 0 10px;
+  left: 14px;
+  border-radius: 14px;
+  transition: transform 0.45s var(--spring), background 0.25s ease;
+}
+
+#hub-clock:hover {
+  background: rgba(255, 255, 255, 0.045);
+  transform: scale(1.03);
+}
+
+#hub-clock:active {
+  transform: scale(0.96);
+}
+
+/* ---- calendar pane ---- */
+#pane-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+#cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#cal-head button {
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font: inherit;
+  transition: transform 0.4s var(--spring), color 0.2s ease;
+}
+
+#cal-prev,
+#cal-next {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+
+#cal-prev svg,
+#cal-next svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#cal-head button:hover {
+  color: var(--fg);
+  transform: scale(1.15);
+}
+
+#cal-head button:active {
+  transform: scale(0.88);
+}
+
+#cal-title {
+  padding: 4px 10px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg) !important;
+}
+
+#cal-week,
+#cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+
+#cal-week span {
+  padding: 4px 0 2px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+#cal-grid {
+  gap: 2px 0;
+}
+
+#cal-grid.slide-next {
+  animation: cal-slide-next 0.42s var(--spring);
+}
+
+#cal-grid.slide-prev {
+  animation: cal-slide-prev 0.42s var(--spring);
+}
+
+@keyframes cal-slide-next {
+  from {
+    opacity: 0;
+    transform: translateX(26px);
+  }
+}
+
+@keyframes cal-slide-prev {
+  from {
+    opacity: 0;
+    transform: translateX(-26px);
+  }
+}
+
+.cal-day {
+  position: relative;
+  height: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+/* the selection disc springs in behind the number */
+.cal-day::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  transform: scale(0);
+  transition: transform 0.45s var(--spring), background 0.25s ease;
+}
+
+.cal-day:hover::before {
+  transform: scale(1);
+}
+
+.cal-day:active::before {
+  transform: scale(0.86);
+}
+
+.cal-day.sel::before {
+  background: var(--accent);
+  transform: scale(1);
+}
+
+.cal-day > * {
+  position: relative;
+}
+
+.cal-day.other {
+  color: var(--fg-mute);
+}
+
+.cal-day.today {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cal-day.sel {
+  color: #0c1f15;
+  font-weight: 700;
+}
+
+.cal-dots {
+  height: 4px;
+  display: flex;
+  gap: 2px;
+}
+
+.cal-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.85;
+}
+
+.cal-day.other .cal-dots i {
+  opacity: 0.4;
+}
+
+.cal-day.sel .cal-dots i {
+  background: #0c1f15;
+  opacity: 0.8;
+}
+
+#cal-day-title {
+  margin: 12px 4px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+#cal-status:empty {
+  display: none;
+}
+
+#cal-events {
+  display: contents;
+}
+
+.cal-event {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 14px;
+}
+
+.cal-event.past {
+  opacity: 0.5;
+}
+
+.cal-event-title {
+  font-size: 12.5px;
+  color: #e9e9ee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-event-time {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.cal-event.fresh {
+  animation: rise 0.5s var(--spring) backwards;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+/* ---- background picker rows ---- */
+.bg-name {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.hub-btn {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 0.4s var(--spring), background 0.25s ease;
+}
+
+.hub-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  transform: scale(1.06);
+}
+
+.hub-btn:active {
+  transform: scale(0.94);
+}
+
+.hub-btn-x {
+  color: var(--fg-dim);
+  padding: 4px 6px;
+}
+
+.hub-btn.hidden {
+  display: none;
+}
+
+.hub-row-note {
+  font-size: 11px;
+  color: #e88a8a;
+}
+
+.hub-row-note:empty {
+  display: none;
+}
+
+#set-bg-dim-label {
+  min-width: 30px;
+  text-align: right;
+}
+
+#cal-day-title:empty {
+  display: none;
+}
+
+/* hub cards that jump to their source app */
+.now-card.clickable {
+  cursor: pointer;
+}
+
+/* ---- dismissible notification cards ---- */
+.notif-history-item {
+  position: relative;
+  overflow: hidden;
+}
+
+/* the transition lives on .leaving so the hover spring on .spot stays untouched */
+.notif-history-item.leaving {
+  transition:
+    height 0.3s cubic-bezier(0.5, 0, 0.2, 1),
+    margin 0.3s cubic-bezier(0.5, 0, 0.2, 1),
+    padding 0.3s cubic-bezier(0.5, 0, 0.2, 1),
+    opacity 0.22s ease,
+    transform 0.3s cubic-bezier(0.5, 0, 0.9, 0.6);
+  height: 0 !important;
+  margin-top: -8px; /* swallow the flex gap so the list closes up smoothly */
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  transform: translateX(36px) scale(0.96);
+  pointer-events: none;
+}
+
+.notif-x {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.2s ease, transform 0.4s var(--spring), background 0.2s ease, color 0.2s ease;
+}
+
+.notif-x svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.notif-history-item:hover .notif-x {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.notif-x:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--fg);
+}
+
+.notif-x:active {
+  transform: scale(0.85);
+}
+
+/* ---- coding card: what you are working on ---- */
+.work-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.work-head .now-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-head .chip {
+  flex: none;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.work-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.work-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.work-lang {
+  flex: none;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.work-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.work-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg-dim);
+  font-size: 10.5px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.chip.branch {
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent);
+}
+
+.chip.ok {
+  color: var(--accent);
+}
+
+.chip.topic {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip.warn {
+  background: rgba(230, 180, 90, 0.16);
+  color: #e6b45a;
+}
+
+.diff-sum {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.diff-sum .add {
+  color: var(--accent);
+}
+
+.diff-sum .add,
+.diff-num,
+.diff-bar .add {
+  color: var(--accent);
+}
+
+.diff-sum .del {
+  color: #e8707a;
+}
+
+.diff-of {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-mute);
+}
+
+.diff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.diff-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  min-width: 0;
+}
+
+.diff-st {
+  flex: none;
+  width: 10px;
+  text-align: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--fg-mute);
+}
+
+.diff-st.st-A {
+  color: var(--accent);
+}
+
+.diff-st.st-D {
+  color: #e8707a;
+}
+
+.diff-st.st-M {
+  color: #e6b45a;
+}
+
+.diff-name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+.diff-barbox {
+  flex: none;
+  width: 56px;
+}
+
+.diff-bar {
+  display: flex;
+  height: 4px;
+  gap: 1px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.diff-bar i {
+  display: block;
+  min-width: 2px;
+}
+
+.diff-bar .add {
+  background: var(--accent);
+}
+
+.diff-bar .del {
+  background: #e8707a;
+}
+
+.diff-num {
+  flex: none;
+  min-width: 62px;
+  text-align: right;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+}
+
+.diff-more {
+  padding-left: 18px;
+  font-size: 10.5px;
+  color: var(--fg-mute);
+}
+
+.work-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--fg-dim);
+}
+
+.page-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.page-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.12s;
+}
+
+.page-btn:hover {
+  background: rgba(255, 255, 255, 0.13);
+  color: var(--fg);
+}
+
+.page-btn:active {
+  transform: scale(0.94);
+}
+
+.page-btn.done {
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--accent);
+}
+
+.page-btn.fail {
+  background: rgba(232, 112, 122, 0.2);
+  color: #e8707a;
+}
+
+/* ---- the island being "called": light pouring down from the top edge of the screen ----
+   The window is parked with only its bottom 44px (CHARGE_VISIBLE) on screen, so the
+   glow lives in that strip and is anchored to its top = the screen's top edge. */
+#call-glow {
+  --charge: 0;
+  --glow: var(--accent-light-rgb); /* the theme colour, a little lighter */
+  position: fixed;
+  /* about as wide as the island itself */
+  left: 50%;
+  width: calc(var(--pill-w, 140) * 1px + 16px);
+  margin-left: calc(var(--pill-w, 140) * -0.5px - 8px);
+  top: calc(var(--edge, 20) * 1px);
+  height: 44px;
+  opacity: var(--fade, 1);
+  display: none;
+  pointer-events: none;
+  z-index: 50;
+  overflow: hidden;
+}
+
+body.calling #call-glow {
+  display: block;
+}
+
+body.call-hide-pill #pill {
+  visibility: hidden;
+}
+
+#call-glow i {
+  position: absolute;
+  display: block;
+}
+
+/* "Edge bloom" (from the Edge Glow Lab): light pouring down from the very edge,
+   with a bright seam on the edge itself. --charge runs 0..1 over the dwell. */
+#call-glow .halo {
+  inset: 0;
+  background: radial-gradient(
+    ellipse calc(70% * var(--charge)) calc(120% * var(--charge)) at 50% 0,
+    rgba(var(--glow), calc(0.9 * var(--charge))) 0%,
+    rgba(var(--glow), calc(0.3 * var(--charge))) 40%,
+    transparent 100%
+  );
+}
+
+#call-glow .core {
+  left: 50%;
+  top: 0;
+  width: calc(100% * var(--charge));
+  height: 2px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, rgb(var(--glow)), #fff, rgb(var(--glow)), transparent);
+  box-shadow: 0 0 12px rgba(var(--glow), calc(0.9 * var(--charge)));
+}
+
+/* the island drops in from just above the edge while the glow drains */
+#pill.landing {
+  animation: pill-land 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes pill-land {
+  from {
+    translate: 0 -40px;
+  }
+  to {
+    translate: 0 0;
+  }
+}
+
+/* ---- download cards ---- */
+.dl-card {
+  padding-block: 10px;
+}
+
+.dl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dl-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "name meta" "bar bar";
+  gap: 4px 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  font-size: 11.5px;
+}
+
+.dl-item.done,
+.dl-item.focus {
+  cursor: pointer;
+}
+
+.dl-item.done:hover,
+.dl-item.focus:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dl-name {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+.dl-meta {
+  grid-area: meta;
+  color: var(--fg-dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dl-item.done .dl-meta {
+  color: var(--accent);
+}
+
+.dl-bar {
+  grid-area: bar;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.dl-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.6s ease-out;
+}
+
+.dl-fill.busy {
+  width: 35%;
+  animation: dl-busy 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes dl-busy {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(185%);
+  }
+}
+
+.dl-src {
+  margin-right: 7px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.dl-item.nobar .dl-bar {
+  display: none;
+}
+
+.dl-app {
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  vertical-align: -3px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.dl-meta.dl-done-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+
+/* ---- line icons (see LI_PATHS in main.js) ---- */
+svg.li {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.hub-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.hub-row-label .li {
+  width: 15px;
+  height: 15px;
+  color: var(--fg-mute);
+  transition: color 0.2s;
+}
+
+.hub-row:hover .hub-row-label .li {
+  color: var(--accent);
+}
+
+.hub-section-title.with-icon {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.hub-section-title .li {
+  width: 12px;
+  height: 12px;
+}
+
+.now-icon.glyph .li {
+  width: 20px;
+  height: 20px;
+}
+
+.now-icon.tile .li {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.8;
+}
+
+.hub-btn-x .li {
+  width: 11px;
+  height: 11px;
+  display: block;
+}
+
+.diff-st .li {
+  width: 11px;
+  height: 11px;
+  stroke-width: 1.9;
+  display: block;
+}
+
+.diff-st {
+  display: flex;
+  justify-content: center;
+}
+
+.calendar-event-time .li,
+.cal-event-time .li {
+  width: 11px;
+  height: 11px;
+  vertical-align: -1.5px;
+  opacity: 0.75;
+}
+
+.hub-row-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  color: var(--fg-mute);
+}
+
+.hub-row-icon .li {
+  width: 15px;
+  height: 15px;
+}
+
+/* text field: a soft dark well with an icon, lit by the accent while it has focus */
+.field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 6px 0 11px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0);
+  cursor: text;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.25s ease;
+}
+
+.field:hover {
+  background: rgba(255, 255, 255, 0.065);
+}
+
+.field:focus-within {
+  background: rgba(var(--accent-rgb), 0.07);
+  box-shadow: 0 0 0 1.5px rgba(var(--accent-rgb), 0.55), 0 0 14px rgba(var(--accent-rgb), 0.18);
+}
+
+.field-icon {
+  flex: none;
+  display: flex;
+  color: var(--fg-mute);
+  transition: color 0.2s ease;
+}
+
+.field-icon .li {
+  width: 14px;
+  height: 14px;
+}
+
+.field:focus-within .field-icon {
+  color: var(--accent);
+}
+
+.field input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.field input::placeholder {
+  color: var(--fg-mute);
+}
+
+.field-clear {
+  flex: none;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.35s var(--spring);
+}
+
+.field-clear .li {
+  width: 11px;
+  height: 11px;
+}
+
+.field-clear:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
+}
+
+.field-clear:active {
+  transform: scale(0.85);
+}
+
+.field.filled .field-clear {
+  display: flex;
+}
+
+/* icons inside card lines */
+.now-title .li,
+.now-sub .li {
+  width: 12px;
+  height: 12px;
+  margin-right: 3px;
+  vertical-align: -1.5px;
+}
+
+.now-title .li {
+  width: 13px;
+  height: 13px;
+  color: var(--fg-mute);
+}
+
+.now-total-label .li {
+  width: 10px;
+  height: 10px;
+  vertical-align: -1px;
+}
+
+.now-total-value .li {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2;
+}
+
+.chip .li {
+  width: 10px;
+  height: 10px;
+  vertical-align: -1px;
+}
+
+#set-glow-label,
+#set-audio-bleed-label {
+  min-width: 34px;
+  text-align: right;
+  font-size: 11px;
+}
+
+/* ---- collapsible cards: collapsed (the default) is the header only ---- */
+.now-card.collapsible {
+  transition: padding 0.35s var(--spring), transform 0.4s var(--spring), background 0.25s ease;
+}
+
+.now-card.collapsible .now-icon {
+  transition: width 0.4s var(--spring), height 0.4s var(--spring), border-radius 0.4s var(--spring);
+}
+
+.now-card.collapsible:not(.open) {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  /* no fill while collapsed: only the soft glow that follows the cursor (see .spot) */
+  --card: transparent;
+}
+
+.now-card.collapsible:not(.open) .now-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+}
+
+.now-card.collapsible:not(.open) .now-sub,
+.now-card.collapsible:not(.open) .work-body,
+.now-card.collapsible:not(.open) .dl-list,
+.now-card.collapsible:not(.open) .now-seek,
+.now-card.collapsible:not(.open) .media-extra {
+  display: none;
+}
+
+.now-card.collapsible.open .work-body,
+.now-card.collapsible.open .dl-list,
+.now-card.collapsible.open .media-extra,
+.now-card.collapsible.open .now-seek {
+  animation: rise 0.5s var(--spring) backwards;
+}
+
+.now-row.toggles,
+.now-card.collapsible:not(.open) {
+  cursor: pointer;
+}
+
+.card-toggle {
+  pointer-events: none; /* only shows the state: the header is the button */
+  opacity: 0; /* only while the mouse is over the card */
+  flex: none;
+  display: grid;
+  place-items: center;
+  /* hidden, it takes no room (the row's gap is cancelled): the header fills the space */
+  width: 0;
+  height: 24px;
+  margin-left: -12px;
+  margin-right: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition: opacity 0.2s ease, width 0.3s var(--spring), margin 0.3s var(--spring), background 0.2s ease, color 0.2s ease, transform 0.35s var(--spring);
+}
+
+.now-card:hover .card-toggle {
+  opacity: 1;
+  width: 24px;
+  margin-left: 0;
+  margin-right: -6px;
+}
+
+.card-toggle .li {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.45s var(--spring);
+}
+
+.card-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
+}
+
+.card-toggle:active {
+  transform: scale(0.85);
+}
+
+.now-card.open .card-toggle .li {
+  transform: rotate(180deg);
+}
+
+/* what a collapsed card says at the right of its header */
+.now-peek {
+  flex: none;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.now-peek .li {
+  width: 12px;
+  height: 12px;
+  margin-right: 3px;
+  vertical-align: -1.5px;
+}
+
+.now-card.open .now-peek {
+  display: none;
+}
+
+/* downloads header: progress ring, speed trace, speed */
+.dl-ring {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.dl-ring > .li {
+  width: 14px;
+  height: 14px;
+}
+
+.dl-ring svg.r {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.dl-ring .rb,
+.dl-ring .rf {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.dl-ring .rb {
+  stroke: rgba(255, 255, 255, 0.09);
+}
+
+.dl-ring .rf {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-dasharray: 94.25;
+  transition: stroke-dashoffset 0.6s ease-out;
+}
+
+.dl-ring.busy svg.r {
+  animation: dl-spin 1.6s linear infinite;
+}
+
+@keyframes dl-spin {
+  to {
+    transform: rotate(270deg);
+  }
+}
+
+.dl-badge {
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #0b0b0d;
+  font-size: 9.5px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+}
+
+.dl-spark {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+}
+
+.dl-spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.dl-spark .a {
+  fill: rgba(var(--accent-rgb), 0.14);
+}
+
+.dl-spark .l {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.dl-card .dl-total {
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.dl-card .dl-total.dl-done-icon {
+  display: flex;
+  color: var(--accent);
+}
+
+.dl-card .dl-list {
+  margin-top: 10px;
+}
+
+/* game card: rings in the header (collapsed), meters in the body (opened) */
+.g-rings {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.now-card.open .g-rings {
+  display: none;
+}
+
+.g-meters {
+  gap: 7px;
+}
+
+.g-meter {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.g-meter[hidden] {
+  display: none;
+}
+
+.g-meter i {
+  position: relative;
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.g-meter i::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--v, 0%);
+  border-radius: 2px;
+  background: var(--c, var(--accent));
+  transition: width 0.5s ease-out;
+}
+
+.g-meter em {
+  font-style: normal;
+  text-align: right;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* frames per second, before the rings */
+.g-fps {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.g-fps[hidden] {
+  display: none;
+}
+
+.g-fps b {
+  font-weight: 650;
+  color: var(--fg);
+}
+
+.g-fps small {
+  margin-left: 2px;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--fg-mute);
+}
+
+.g-vitals {
+  gap: 10px;
+}
+
+.g-vitals[hidden] {
+  display: none;
+}
+
+.g-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.g-stat b {
+  display: block;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.g-stat span {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.g-graph {
+  height: 54px;
+}
+
+.g-graph svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.g-graph .a {
+  fill: rgba(var(--accent-rgb), 0.13);
+}
+
+.g-graph .l {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.g-graph .g {
+  stroke: rgba(255, 255, 255, 0.07);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  vector-effect: non-scaling-stroke;
+}
+
+/* ---- LLM sessions ---- */
+.llm-card.llm-waiting {
+  background: rgba(232, 176, 74, 0.09);
+}
+
+.llm-tile {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin: 0 5px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0e0e10;
+  background: var(--c);
+}
+
+/* the ring around the tile is the model's context window */
+.llm-tile .cr {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  transform: rotate(-90deg);
+  pointer-events: none;
+}
+
+.llm-tile .rb,
+.llm-tile .rf {
+  fill: none;
+  stroke-width: 2.6;
+}
+
+.llm-tile .rb {
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.llm-tile .rf {
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease;
+}
+
+.llm-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+}
+
+.llm-live .li {
+  width: 12px;
+  height: 12px;
+  color: var(--fg-mute);
+}
+
+.llm-live span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-live.waiting,
+.llm-live.waiting .li {
+  color: #e8b04a;
+}
+
+.llm-right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.llm-host {
+  display: grid;
+  place-items: center;
+  color: var(--fg-mute);
+}
+
+.llm-host .li {
+  width: 13px;
+  height: 13px;
+}
+
+.llm-ico {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.llm-ico .li {
+  width: 16px;
+  height: 16px;
+}
+
+.llm-ico.working {
+  color: var(--accent);
+}
+
+.llm-ico.waiting {
+  color: #e8b04a;
+}
+
+.llm-ico.waiting .li {
+  animation: llm-ring 1.1s ease-in-out infinite;
+  transform-origin: 50% 60%;
+}
+
+.llm-ico.finished {
+  color: var(--accent);
+}
+
+.llm-ico.idle {
+  color: var(--fg-mute);
+}
+
+.llm-spin {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--accent);
+  animation: llm-turn 0.9s linear infinite;
+}
+
+@keyframes llm-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes llm-ring {
+  0%, 55%, 100% { transform: rotate(0); }
+  8% { transform: rotate(-16deg); }
+  16% { transform: rotate(14deg); }
+  24% { transform: rotate(-12deg); }
+  32% { transform: rotate(10deg); }
+  40% { transform: rotate(-6deg); }
+  48% { transform: rotate(4deg); }
+}
+
+.llm-body {
+  gap: 10px;
+}
+
+.llm-prompt {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.llm-prompt[hidden] {
+  display: none;
+}
+
+.llm-prompt b {
+  margin-right: 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.llm-feed {
+  display: grid;
+  gap: 4px;
+}
+
+.llm-fr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+}
+
+.llm-fr .li {
+  width: 13px;
+  height: 13px;
+  color: var(--fg-mute);
+}
+
+.llm-fr span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-fr.now {
+  color: var(--fg);
+}
+
+.llm-fr.now .li {
+  color: var(--accent);
+}
+
+.llm-ctx {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.llm-ctx i {
+  position: relative;
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.llm-ctx i::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--v, 0%);
+  border-radius: 2px;
+  background: var(--c, var(--accent));
+  transition: width 0.5s ease-out;
+}
+
+.llm-ctx em {
+  font-style: normal;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.llm-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.llm-stat {
+  min-width: 0;
+}
+
+.llm-stat b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.llm-stat span {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+
+.llm-focus {
+  width: fit-content;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: #e8b04a;
+  color: #0e0e10;
+  font: 600 11.5px "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.llm-focus[hidden] {
+  display: none;
+}
+
+/* the reset button of a slider: appears (and takes room) only while the slider is off its default */
+.slider-reset {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  overflow: hidden;
+  transition: width 0.3s var(--spring), margin 0.3s var(--spring), opacity 0.2s ease, color 0.15s ease, transform 0.35s var(--spring);
+}
+
+.slider-reset .li {
+  width: 13px;
+  height: 13px;
+}
+
+.slider-reset:hover {
+  color: var(--fg);
+  transform: rotate(-60deg);
+}
+
+.slider-reset.is-default {
+  width: 0;
+  margin-right: -10px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* media card, opened: jump 5 s back / forward around a speed slider (0.1x to 16x, log scale) */
+.media-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.media-extra.hidden {
+  display: none;
+}
+
+.media-jump,
+.media-rate {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s ease, transform 0.3s var(--spring);
+}
+
+.media-jump {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+}
+
+.media-jump svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.media-jump svg text {
+  fill: currentColor;
+  stroke: none;
+  font-size: 5.4px;
+  font-weight: 700;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.media-jump:hover,
+.media-rate:hover {
+  color: var(--fg);
+}
+
+.media-jump:active {
+  transform: scale(0.88);
+}
+
+.media-jump:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.media-rate {
+}
+
+.media-extra .media-rate {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+}
+
+.media-extra .media-rate::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  margin-top: -3px;
+  border-right: 1.4px solid currentColor;
+  border-bottom: 1.4px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.media-extra .media-rate.hidden {
+  display: none;
+}
+
+/* the dropdown: a row of steps under the controls, opened and closed by the speed button */
+.rate-menu {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 4px;
+  margin-top: 6px;
+}
+
+.rate-menu.hidden,
+.now-card.collapsible:not(.open) .rate-menu {
+  display: none;
+}
+
+.rate-opt {
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.rate-opt:hover {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.rate-opt.on {
+  color: var(--accent);
+}
+
+/* the seek bar shares the row with the jump buttons and the speed */
+.media-extra .now-seek {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+/* the theme colour swatches in Settings */
+.swatches {
+  gap: 7px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.75;
+  transition: transform 0.3s var(--spring), opacity 0.15s ease, box-shadow 0.2s ease;
+}
+
+.swatch:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+.swatch.on {
+  opacity: 1;
+  box-shadow: 0 0 0 2px #0b0b0d, 0 0 0 3.5px rgba(255, 255, 255, 0.55);
+}
+
+/* ---- the settings tabs: a row of icons ---- */
+#set-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin: 2px 0 4px;
+}
+
+#set-tabs button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.2s ease, transform 0.3s var(--spring);
+}
+
+#set-tabs button .li {
+  width: 16px;
+  height: 16px;
+}
+
+#set-tabs button:hover {
+  color: var(--fg);
+  transform: translateY(-1px);
+}
+
+#set-tabs button.on {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+.set-tab.hidden {
+  display: none;
+}
+
+
+.media-jump.hidden {
+  display: none;
+}
+
+/* a card with nothing more to show when opened: always as open as it gets (its sub-line shows), no chevron */
+.now-card.collapsible.flat-card .card-toggle {
+  display: none;
+}
+
+.now-card.collapsible.flat-card:not(.open) .now-sub {
+  display: block;
+}
+
+.now-card.flat-card .now-peek {
+  display: none;
+}

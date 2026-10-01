@@ -978,6 +978,15 @@ function paintViz(now, dt) {
     }
   }
 
+  // the light that goes outside the island is the lights only, taken before the rings are drawn:
+  // the rings stay inside the island
+  const bleeding = bleedLevel > 0 && cursorPad > 0;
+  document.body.classList.toggle("bleeding", bleeding);
+  if (bleeding) {
+    bleedCanvas.style.opacity = String(Math.min(1, bleedLevel * 1.1));
+    paintBleed();
+  }
+
   // ripples: very thin circular waves expanding from the middle between the eyes. Sound panned to a
   // side shows as a ring that is solid on that side and translucent on the other.
   c.lineWidth = 0.7; // hairline, always -- only the fade changes
@@ -1020,12 +1029,6 @@ function paintViz(now, dt) {
     c.stroke();
   }
   c.globalCompositeOperation = "source-over";
-  const bleeding = bleedLevel > 0 && cursorPad > 0;
-  document.body.classList.toggle("bleeding", bleeding);
-  if (bleeding) {
-    bleedCanvas.style.opacity = String(Math.min(1, bleedLevel * 1.1));
-    paintBleed();
-  }
 }
 
 let lastFrameT = performance.now();

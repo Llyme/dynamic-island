@@ -820,7 +820,9 @@ fn spawn_edge_poll(window: WebviewWindow) {
                 && (cy as f64) >= pos_y
                 && (cy as f64) < pos_y + win_h;
             // pinned and left alone for the hide delay: it shrinks (and grows back when touched)
-            if user_pin && !hovering && !dragging {
+            // (a notification banner or a session pill counts as being looked at: it never shrinks)
+            let brief_up = matches!(current_view, PillView::Notification | PillView::Brief);
+            if user_pin && !hovering && !dragging && !brief_up {
                 pin_idle_ticks += (real_dt / dt).round().max(1.0) as u64;
             } else {
                 pin_idle_ticks = 0;

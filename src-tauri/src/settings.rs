@@ -36,13 +36,22 @@ pub struct Settings {
     pub edge_dwell_ms: u64,
     /// while pinned and left alone (for the hide delay) the island shrinks to this share of its size, 100 = never
     pub pin_shrink: u64,
-    /// width of the collapsed (compact) island as a percent of its normal width; the hub is not affected
+    /// width in logical px of the standard collapsed island (the media and work pills, the banner, the session
+    /// pill); the idle and game pills keep their proportions. (Older files hold a percentage: see `compact_px`.)
     pub compact_width: u64,
+    /// width of the expanded island (the hub), in logical pixels
+    pub hub_width: u64,
+    /// how far below the top edge of the screen the island sits, in logical pixels
+    pub top_margin: u64,
     /// reveal under the cursor (vs. screen center) and glide along with it at the top edge
     pub show_at_cursor: bool,
     pub cursor_follow: bool,
     /// eyes react to system audio (WASAPI loopback, analyzed locally, never stored)
     pub react_to_audio: bool,
+    /// draw the eyes (the audio light shows either way)
+    pub show_eyes: bool,
+    /// theme (accent) colour as #rrggbb
+    pub accent_color: String,
     /// 0..100 -- how strongly (and how far) the sound's light bleeds outside the island, 0 = off
     pub audio_bleed: u64,
     pub calendar_ics_url: String,
@@ -73,10 +82,14 @@ impl Default for Settings {
             peek_duration_s: 3,
             edge_dwell_ms: 300,
             pin_shrink: 75,
-            compact_width: 100,
+            compact_width: 260,
+            hub_width: 420,
+            top_margin: 4,
             show_at_cursor: true,
             cursor_follow: true,
             react_to_audio: true,
+            show_eyes: true,
+            accent_color: "#5ac88c".into(),
             audio_bleed: 60,
             calendar_ics_url: String::new(),
             calendar_reminder_lead_min: 15,
@@ -134,14 +147,22 @@ fn migrate_old_install() {
     }
 }
 
+/// The collapsed island's width used to be a percentage (60..160) of 260 px; it is pixels now.
+/// Anything up to 160 is read as the old percentage.
+pub fn compact_px(v: u64) -> u64 {
+    (if v <= 160 { v * 260 / 100 } else { v }).clamp(180, 560)
+}
+
 pub fn load() -> Settings {
     migrate_old_install();
-    (|| {
+    let mut s: Settings = (|| {
         let path = settings_path()?;
         let text = std::fs::read_to_string(path).ok()?;
         serde_json::from_str(&text).ok()
     })()
-    .unwrap_or_default()
+    .unwrap_or_default();
+    s.compact_width = compact_px(s.compact_width);
+    s
 }
 
 pub(crate) fn save_to_disk(settings: &Settings) {
@@ -208,7 +229,9 @@ pub fn save_settings(window: WebviewWindow, settings: Settings) {
 
     state.edge_dwell_ms.store(settings.edge_dwell_ms.min(2000), Ordering::Relaxed);
     state.pin_shrink.store(settings.pin_shrink.clamp(30, 100), Ordering::Relaxed);
-    state.compact_width.store(settings.compact_width.clamp(60, 160), Ordering::Relaxed);
+    state.compact_width.store(compact_px(settings.compact_width), Ordering::Relaxed);
+    state.hub_width.store(settings.hub_width.clamp(340, 640), Ordering::Relaxed);
+    state.top_margin.store(settings.top_margin.clamp(0, 80), Ordering::Relaxed);
     state.show_at_cursor.store(settings.show_at_cursor, Ordering::Relaxed);
     state.cursor_follow.store(settings.cursor_follow, Ordering::Relaxed);
     state.audio_enabled.store(settings.react_to_audio, Ordering::Relaxed);

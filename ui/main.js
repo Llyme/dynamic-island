@@ -615,6 +615,8 @@ const ICON = {
 
 // ---- line icons used across the island: one stroke style, coloured by the text around them ----
 const LI_PATHS = {
+  palette: "M8 2.5a5.5 5.5 0 1 0 0 11c.9 0 1.2-.7.8-1.3-.4-.6 0-1.4.8-1.4h1.4a2 2 0 0 0 2-2A5.5 5.5 0 0 0 8 2.5zM5 8h.01M7 5.5h.01M10 5.5h.01",
+  reset: "M3.2 8a4.8 4.8 0 1 0 1.5-3.5M3 2.8v2.4h2.4",
   gamepad: "M4.6 5.5h6.8a3 3 0 0 1 2.9 3.7l-.6 2.3a1.5 1.5 0 0 1-2.6.5L10 10.5H6l-1.1 1.5a1.5 1.5 0 0 1-2.6-.5l-.6-2.3a3 3 0 0 1 2.9-3.7zM5.2 7.3v2.6M3.9 8.6h2.6M10.6 7.8h.01M12.1 9.3h.01",
   briefcase: "M2.5 5.5h11v7.5h-11zM6 5.5V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M2.5 9h11",
   lock: "M4 7.2h8v6.3H4zM5.6 7.2V5.2a2.4 2.4 0 0 1 4.8 0v2M8 9.6v1.6",
@@ -871,6 +873,9 @@ function paintViz(now, dt) {
   const gain = currentView === "hub" ? 0.5 : currentView === "idle" ? 1 : 0.7;
   const musicish = 0.35 + 0.65 * (1 - audio.voiceSm);
   const size = Math.max(w, h);
+  // a narrow island packs the same four orbs into less room, and they add up to a glare:
+  // below the usual compact width they get smaller and fainter
+  const crowd = Math.min(1, Math.max(0.5, w / (260 * S)));
 
   // orbs: bass / low-mid / mid / high, each wandering on its own slow path
   const hues = [baseHue, baseHue + 45 * (1 - 0.5 * chill), baseHue + 115 * (1 - 0.6 * chill), baseHue + 195 * (1 - 0.7 * chill)];
@@ -881,8 +886,8 @@ function paintViz(now, dt) {
       currentView === "hub"
         ? h * (0.1 + 0.16 * (0.5 + 0.5 * Math.sin(t * (0.6 + 0.13 * i) + i * 2.3)))
         : h * (0.5 + 0.3 * Math.sin(t * (0.6 + 0.13 * i) + i * 2.3));
-    const r = size * (currentView === "hub" ? 0.3 : 0.24) * (0.55 + 0.75 * env);
-    const a = (0.04 + 0.3 * env) * audio.level * gain * musicish * 1.4 * (1 - 0.75 * chill);
+    const r = size * (currentView === "hub" ? 0.3 : 0.24) * (0.55 + 0.75 * env) * crowd;
+    const a = (0.04 + 0.3 * env) * audio.level * gain * musicish * 1.4 * (1 - 0.75 * chill) * crowd * crowd;
     const g = c.createRadialGradient(px, py, 0, px, py, r);
     g.addColorStop(0, `hsla(${hues[i]}, 90%, 62%, ${a})`);
     g.addColorStop(1, `hsla(${hues[i]}, 90%, 62%, 0)`);
@@ -962,6 +967,8 @@ function paintViz(now, dt) {
 }
 
 let lastFrameT = performance.now();
+let showEyes = true; // Settings > Eyes
+let eyesDrawn = false;
 function frame(now) {
   // one bad frame must never kill the loop (the eyes would freeze/vanish for good)
   try {
@@ -970,11 +977,20 @@ function frame(now) {
     updateCall(now);
     updateAudio(now, dt);
     paintViz(now, dt);
-    if (currentView === "idle") {
+    if (!showEyes) {
+      // no eyes: nothing to draw, and what was drawn is cleared once
+      if (eyesDrawn) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        hubEyesCtx.clearRect(0, 0, hubEyesCanvas.width, hubEyesCanvas.height);
+        eyesDrawn = false;
+      }
+    } else if (currentView === "idle") {
+      eyesDrawn = true;
       updateMood(now);
       tickBlink(now);
       paintEyes();
     } else if (currentView === "hub") {
+      eyesDrawn = true;
       updateMood(now);
       tickBlink(now);
       paintHubEyes();
@@ -995,10 +1011,11 @@ listen("view-tick", (event) => {
   briefEl.classList.toggle("hidden", currentView !== "brief");
   hubEl.classList.toggle("hidden", currentView !== "hub");
   pill.dataset.view = currentView;
-  // the brief-show views arrive with a glow; restart it each time one takes over
+  // only what happened by itself glows (a notification banner, a session pill): calling the
+  // island by hovering the edge, or a media / game / work view that settles in, does not
   document.body.dataset.view = currentView;
   document.body.classList.remove("glow");
-  if (currentView !== "idle" && currentView !== "hub") {
+  if (currentView === "notification" || currentView === "brief") {
     void document.body.offsetWidth;
     document.body.classList.add("glow");
   }
@@ -1570,6 +1587,8 @@ const hubEl = document.getElementById("hub");
     "set-start-with-windows": "power",
     "set-show-at-cursor": "cursor",
     "set-cursor-follow": "follow",
+    "set-show-eyes": "eye",
+    "set-accent": "palette",
     "set-react-to-audio": "wave",
     "set-audio-bleed": "sun",
     "set-edge-dwell": "timer",
@@ -1577,6 +1596,8 @@ const hubEl = document.getElementById("hub");
     "set-peek-duration": "hourglass",
     "set-pin-shrink": "shrink",
     "set-compact-width": "follow",
+    "set-hub-width": "follow",
+    "set-top-margin": "follow",
     "set-glow": "sparkle",
     "bg-pick-compact": "image",
     "bg-pick-hub": "expand",
@@ -1610,13 +1631,17 @@ const hubEl = document.getElementById("hub");
     "set-start-with-windows": "Start with Windows",
     "set-show-at-cursor": "Appear under the cursor",
     "set-cursor-follow": "Follow the cursor along the top edge",
+    "set-show-eyes": "Show the eyes (the sound light stays either way)",
+    "set-accent": "Theme colour",
     "set-react-to-audio": "Eyes react to sound",
     "set-audio-bleed": "Sound light bleeding outside the island: strength and reach (0 = off)",
     "set-edge-dwell": "How long the cursor rests at the edge before it appears",
     "set-idle-hide-delay": "How long before it hides again",
     "set-peek-duration": "How long a status stays up",
     "set-pin-shrink": "How small the island gets while pinned and left alone (100% = never)",
-    "set-compact-width": "Width of the collapsed island",
+    "set-compact-width": "Width of the collapsed island (the idle and game pills keep their proportions)",
+    "set-hub-width": "Width of the expanded island",
+    "set-top-margin": "Distance of the island from the top edge of the screen",
     "set-glow": "Glow around a status: strength and reach",
     "bg-pick-compact": "Background of the island",
     "bg-pick-hub": "Background of the expanded island",
@@ -1650,11 +1675,47 @@ const setIdleHideDelayLabel = document.getElementById("set-idle-hide-delay-label
 
 const setShowAtCursor = document.getElementById("set-show-at-cursor");
 const setReactToAudio = document.getElementById("set-react-to-audio");
+const setShowEyes = document.getElementById("set-show-eyes");
+// the theme colour: a handful of swatches; the accent of the hub, the glow and the pills follows
+const ACCENTS = ["#5ac88c", "#4cc9c0", "#5aa9f0", "#a487ee", "#ee7fb5", "#e8776f", "#ee9a4d", "#e3c457", "#e8e8ee"];
+let accentColor = ACCENTS[0];
+function applyAccent(hex) {
+  if (!/^#[0-9a-f]{6}$/i.test(hex || "")) hex = ACCENTS[0];
+  accentColor = hex.toLowerCase();
+  const n = parseInt(accentColor.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const rs = document.documentElement.style;
+  rs.setProperty("--accent", accentColor);
+  rs.setProperty("--accent-rgb", `${r}, ${g}, ${b}`);
+  // a lighter tint of it, for the edge glow
+  rs.setProperty("--accent-light-rgb", `${Math.round(r + (255 - r) * 0.28)}, ${Math.round(g + (255 - g) * 0.28)}, ${Math.round(b + (255 - b) * 0.28)}`);
+  // the darker end of the accent's gradients
+  rs.setProperty("--accent-deep", `rgb(${Math.round(r * 0.62)}, ${Math.round(g * 0.62)}, ${Math.round(b * 0.62)})`);
+  for (const sw of document.querySelectorAll("#set-accent .swatch")) sw.classList.toggle("on", sw.dataset.color === accentColor);
+}
+for (const hex of ACCENTS) {
+  const sw = document.createElement("button");
+  sw.type = "button";
+  sw.className = "swatch";
+  sw.dataset.color = hex;
+  sw.style.background = hex;
+  sw.setAttribute("aria-label", hex);
+  sw.addEventListener("mousedown", (e) => e.stopPropagation());
+  sw.addEventListener("click", () => {
+    applyAccent(hex);
+    saveSettingsFromForm();
+  });
+  document.getElementById("set-accent").append(sw);
+}
 const setCursorFollow = document.getElementById("set-cursor-follow");
 const setPeekDuration = document.getElementById("set-peek-duration");
 const setPeekDurationLabel = document.getElementById("set-peek-duration-label");
 const setCompactWidth = document.getElementById("set-compact-width");
 const setCompactWidthLabel = document.getElementById("set-compact-width-label");
+const setHubWidth = document.getElementById("set-hub-width");
+const setHubWidthLabel = document.getElementById("set-hub-width-label");
+const setTopMargin = document.getElementById("set-top-margin");
+const setTopMarginLabel = document.getElementById("set-top-margin-label");
 const setPinShrink = document.getElementById("set-pin-shrink");
 const setPinShrinkLabel = document.getElementById("set-pin-shrink-label");
 const pinShrinkText = (v) => (Number(v) >= 100 ? "off" : `${v}%`);
@@ -1687,8 +1748,15 @@ async function loadSettingsIntoForm() {
   setShowAtCursor.checked = currentSettings.show_at_cursor;
   setCursorFollow.checked = currentSettings.cursor_follow;
   setReactToAudio.checked = currentSettings.react_to_audio;
-  setCompactWidth.value = currentSettings.compact_width ?? 100;
-  setCompactWidthLabel.textContent = `${setCompactWidth.value}%`;
+  setShowEyes.checked = currentSettings.show_eyes ?? true;
+  applyAccent(currentSettings.accent_color);
+  showEyes = setShowEyes.checked;
+  setCompactWidth.value = currentSettings.compact_width ?? 260;
+  setCompactWidthLabel.textContent = `${setCompactWidth.value}px`;
+  setHubWidth.value = currentSettings.hub_width ?? 420;
+  setHubWidthLabel.textContent = `${setHubWidth.value}px`;
+  setTopMargin.value = currentSettings.top_margin ?? 4;
+  setTopMarginLabel.textContent = `${setTopMargin.value}px`;
   setPinShrink.value = currentSettings.pin_shrink ?? 75;
   setPinShrinkLabel.textContent = pinShrinkText(setPinShrink.value);
   setEdgeDwell.value = currentSettings.edge_dwell_ms;
@@ -1708,6 +1776,32 @@ async function loadSettingsIntoForm() {
   setBgDim.value = currentSettings.bg_dim;
   setBgDimLabel.textContent = `${currentSettings.bg_dim}%`;
   applyBackgrounds(currentSettings);
+  syncSliderResets();
+}
+
+// every slider gets a small reset button that shows only while it is off its default
+function syncSliderResets() {
+  for (const input of document.querySelectorAll('input[type="range"][data-default]')) {
+    const btn = input.previousElementSibling;
+    if (btn?.classList.contains("slider-reset")) btn.classList.toggle("is-default", input.value === input.dataset.default);
+  }
+}
+for (const input of document.querySelectorAll('input[type="range"][data-default]')) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "slider-reset is-default";
+  btn.innerHTML = li("reset");
+  btn.dataset.tip = "Reset to default";
+  btn.addEventListener("mousedown", (e) => e.stopPropagation());
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    input.value = input.dataset.default;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  input.addEventListener("input", syncSliderResets);
+  input.before(btn);
 }
 
 function saveSettingsFromForm() {
@@ -1725,20 +1819,25 @@ function saveSettingsFromForm() {
     show_at_cursor: setShowAtCursor.checked,
     cursor_follow: setCursorFollow.checked,
     react_to_audio: setReactToAudio.checked,
+    show_eyes: setShowEyes.checked,
     peek_duration_s: Number(setPeekDuration.value),
     edge_dwell_ms: Number(setEdgeDwell.value),
     pin_shrink: Number(setPinShrink.value),
     compact_width: Number(setCompactWidth.value),
+    hub_width: Number(setHubWidth.value),
+    top_margin: Number(setTopMargin.value),
     calendar_ics_url: setCalendarUrl.value.trim(),
     calendar_reminder_lead_min: Number(setCalendarLead.value),
     bg_dim: Number(setBgDim.value),
     glow_intensity: Number(setGlow.value),
     audio_bleed: Number(setAudioBleed.value),
   };
+  showEyes = setShowEyes.checked;
+  currentSettings.accent_color = accentColor;
   invoke("save_settings", { settings: currentSettings });
 }
 
-for (const el of [setGameDetection, setWorkDetection, setDownloadDetection, setLlmDetection, setLlmBrief, setPagePreview, setStartWithWindows, setShowAtCursor, setCursorFollow, setReactToAudio]) {
+for (const el of [setGameDetection, setWorkDetection, setDownloadDetection, setLlmDetection, setLlmBrief, setPagePreview, setStartWithWindows, setShowAtCursor, setCursorFollow, setReactToAudio, setShowEyes]) {
   el.addEventListener("change", saveSettingsFromForm);
 }
 setIdleHideDelay.addEventListener("input", () => {
@@ -1746,9 +1845,17 @@ setIdleHideDelay.addEventListener("input", () => {
 });
 setIdleHideDelay.addEventListener("change", saveSettingsFromForm);
 setCompactWidth.addEventListener("input", () => {
-  setCompactWidthLabel.textContent = `${setCompactWidth.value}%`;
+  setCompactWidthLabel.textContent = `${setCompactWidth.value}px`;
 });
 setCompactWidth.addEventListener("change", saveSettingsFromForm);
+setHubWidth.addEventListener("input", () => {
+  setHubWidthLabel.textContent = `${setHubWidth.value}px`;
+});
+setHubWidth.addEventListener("change", saveSettingsFromForm);
+setTopMargin.addEventListener("input", () => {
+  setTopMarginLabel.textContent = `${setTopMargin.value}px`;
+});
+setTopMargin.addEventListener("change", saveSettingsFromForm);
 setPinShrink.addEventListener("input", () => {
   setPinShrinkLabel.textContent = pinShrinkText(setPinShrink.value);
 });
@@ -2182,7 +2289,10 @@ for (const id of ["bg-pick-compact", "bg-pick-hub", "bg-clear-compact", "bg-clea
 }
 document.addEventListener("visibilitychange", updateBg);
 // at startup: the backgrounds apply before the hub (and its form) is ever opened
-invoke("get_settings").then(applyBackgrounds);
+invoke("get_settings").then((s) => {
+  applyBackgrounds(s);
+  applyAccent(s.accent_color); // from the start, not only once the settings were opened
+});
 
 // every settings row is a <label>, so clicking anywhere on it (not just the
 // control) toggles/focuses it -- that click also bubbles up to #pill's own
@@ -2294,11 +2404,25 @@ const hubMediaPrev = document.getElementById("hub-media-prev");
 const hubMediaNext = document.getElementById("hub-media-next");
 const hubMediaSeek = document.getElementById("hub-media-seek");
 const hubMediaSeekFill = document.getElementById("hub-media-seek-fill");
+const hubMediaBack = document.getElementById("hub-media-back");
+const hubMediaFwd = document.getElementById("hub-media-fwd");
+const hubMediaRate = document.getElementById("hub-media-rate");
+const hubMediaRateLabel = document.getElementById("hub-media-rate-label");
+const hubMediaRates = document.getElementById("hub-media-rates");
 const nowCardsEl = document.getElementById("now-cards");
 // cards the user has opened (all start collapsed); kept by key so a re-render keeps them open
 const openCards = new Set();
 
 hubMediaPrev.innerHTML = ICON.prev;
+// the jump buttons: a circular arrow with the number inside (the forward one is the mirror image)
+const JUMP_SVG = (flip) =>
+  `<svg viewBox="0 0 16 16"><g${flip ? ' transform="translate(16 0) scale(-1 1)"' : ""}><path d="M3.2 8a4.8 4.8 0 1 1 1.4 3.4M3 4v3.2h3.2"/></g><text x="8" y="10.2" text-anchor="middle">5</text></svg>`;
+hubMediaBack.innerHTML = JUMP_SVG(false);
+hubMediaFwd.innerHTML = JUMP_SVG(true);
+// speed: a dropdown of fixed steps from 0.1x to 16x
+const RATES = [0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16];
+const rateText = (r) => `${Number(r.toFixed(2))}×`;
+let hubMediaRateNow = 1;
 hubMediaNext.innerHTML = ICON.next;
 let hubMediaDuration = 0;
 let hubMediaSource = "";
@@ -2326,12 +2450,20 @@ function applyHubMedia(m) {
   // live streams report no duration -- nothing to seek in, so no bar
   hubMediaDuration = m.duration || 0;
   hubMediaSeek.classList.toggle("hidden", !(hubMediaDuration > 0));
+  // jump buttons need a player that takes seeks; the speed slider one that takes a speed
+  hubMediaBack.disabled = hubMediaFwd.disabled = !m.can_seek;
+  // the speed dropdown only exists for a player that takes a speed
+  hubMediaRate.classList.toggle("hidden", !m.can_rate);
+  if (!m.can_rate) hubMediaRates.classList.add("hidden");
+  hubMediaRateNow = m.rate || 1;
+  hubMediaRateLabel.textContent = rateText(hubMediaRateNow);
+  for (const o of hubMediaRates.children) o.classList.toggle("on", Math.abs(Number(o.dataset.rate) - hubMediaRateNow) < 0.01);
   if (hubMediaDuration > 0) {
     hubMediaSeekFill.style.width = `${Math.min(100, ((m.position || 0) / hubMediaDuration) * 100)}%`;
   }
 }
 
-for (const btn of [hubMediaPlay, hubMediaPrev, hubMediaNext, hubMediaSeek]) {
+for (const btn of [hubMediaPlay, hubMediaPrev, hubMediaNext, hubMediaSeek, hubMediaBack, hubMediaFwd, hubMediaRate, hubMediaRates]) {
   btn.addEventListener("mousedown", (e) => e.stopPropagation());
 }
 // clicking the card itself (not its buttons / seek bar) jumps to whoever is playing
@@ -2348,6 +2480,23 @@ hubMediaEl.addEventListener("dblclick", (e) => {
 hubMediaPlay.addEventListener("click", () => invoke("media_play_pause"));
 hubMediaPrev.addEventListener("click", () => invoke("media_previous"));
 hubMediaNext.addEventListener("click", () => invoke("media_next"));
+hubMediaBack.addEventListener("click", () => invoke("media_seek_by", { deltaSeconds: -5 }));
+hubMediaFwd.addEventListener("click", () => invoke("media_seek_by", { deltaSeconds: 5 }));
+for (const r of RATES) {
+  const o = el("button", "rate-opt", rateText(r));
+  o.dataset.rate = String(r);
+  o.addEventListener("click", async () => {
+    hubMediaRates.classList.add("hidden");
+    hubMediaRateLabel.textContent = rateText(r);
+    scheduleHubHeight();
+    await invoke("media_set_rate", { rate: r }); // the next update shows the speed the player took
+  });
+  hubMediaRates.append(o);
+}
+hubMediaRate.addEventListener("click", () => {
+  hubMediaRates.classList.toggle("hidden");
+  scheduleHubHeight();
+});
 hubMediaSeek.addEventListener("click", (e) => {
   if (!(hubMediaDuration > 0)) return;
   const rect = hubMediaSeek.getBoundingClientRect();
@@ -2430,7 +2579,7 @@ function collapsible(card, key) {
   row.classList.add("toggles");
   // the header is the row plus the card's padding around it: no dead spots
   card._inHeader = (e) => {
-    if (e.target.closest("button:not(.card-toggle), .now-seek, .work-body, .dl-list")) return false;
+    if (e.target.closest("button:not(.card-toggle), .now-seek, .media-extra, .rate-menu, .work-body, .dl-list")) return false;
     const r = row.getBoundingClientRect();
     return e.clientY <= r.bottom + 12;
   };

@@ -21,7 +21,7 @@ body {
   inset: var(--pad);
   overflow: hidden;
   border-radius: 14px;
-  background: linear-gradient(180deg, #19191c 0%, #0b0b0d 75%);
+  background: #0b0b0d;
   cursor: pointer;
   font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
   isolation: isolate; /* so #bg can sit at z-index -1: above the pill fill, under everything else */
@@ -59,7 +59,7 @@ body {
 }
 
 body {
-  --glow: 90, 200, 140;
+  --glow: var(--accent-rgb);
   --r: 14px;
 }
 
@@ -104,7 +104,7 @@ body[data-view="brief"] {
 }
 
 body[data-view="brief"][data-brief="finished"] {
-  --glow: 90, 200, 140;
+  --glow: var(--accent-rgb);
 }
 
 #pill-glow {
@@ -361,7 +361,7 @@ body.big #viz-bleed {
   height: 100%;
   width: 0;
   border-radius: 1px;
-  background: #5ac88c;
+  background: var(--accent);
   transition: width 1s linear;
 }
 
@@ -415,17 +415,17 @@ body.big #viz-bleed {
   height: 7px;
   margin-right: 2px;
   border-radius: 50%;
-  background: #5ac88c;
+  background: var(--accent);
   animation: live 1.8s ease-in-out infinite;
 }
 
 @keyframes live {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(90, 200, 140, 0.55);
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.55);
   }
   60% {
-    box-shadow: 0 0 0 6px rgba(90, 200, 140, 0);
+    box-shadow: 0 0 0 6px rgba(var(--accent-rgb), 0);
   }
 }
 
@@ -437,7 +437,7 @@ body.big #viz-bleed {
   width: 26px;
   height: 26px;
   border-radius: 9px;
-  background: linear-gradient(135deg, #5ac88c, #3a8f63);
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   color: #0b0b0d;
   font-size: 11px;
   font-weight: 800;
@@ -508,8 +508,8 @@ body.big #viz-bleed {
   width: 38px;
   height: 38px;
   border-radius: 13px;
-  background: rgba(90, 200, 140, 0.14);
-  color: #5ac88c;
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent);
 }
 
 #notif-icon svg {
@@ -554,7 +554,7 @@ body.big #viz-bleed {
   height: 100%;
   width: 100%;
   border-radius: 1px;
-  background: rgba(90, 200, 140, 0.8);
+  background: rgba(var(--accent-rgb), 0.8);
   transform-origin: left center;
 }
 
@@ -633,12 +633,12 @@ body.big #viz-bleed {
   /* eased falloff to fully transparent: no visible rim while it grows */
   background: radial-gradient(
     circle,
-    rgba(90, 200, 140, 0.5) 0%,
-    rgba(90, 200, 140, 0.42) 22%,
-    rgba(90, 200, 140, 0.26) 46%,
-    rgba(90, 200, 140, 0.11) 70%,
-    rgba(90, 200, 140, 0.03) 88%,
-    rgba(90, 200, 140, 0) 100%
+    rgba(var(--accent-rgb), 0.5) 0%,
+    rgba(var(--accent-rgb), 0.42) 22%,
+    rgba(var(--accent-rgb), 0.26) 46%,
+    rgba(var(--accent-rgb), 0.11) 70%,
+    rgba(var(--accent-rgb), 0.03) 88%,
+    rgba(var(--accent-rgb), 0) 100%
   );
   transform: scale(0);
   pointer-events: none;
@@ -725,7 +725,7 @@ body.big #viz-bleed {
 #game-icon .li {
   width: 22px;
   height: 22px;
-  color: var(--accent, #5ac88c);
+  color: var(--accent, var(--accent));
 }
 
 /* ---- pin / unpin: a lock pops up at the centre of the island for a moment ---- */
@@ -741,7 +741,7 @@ body.big #viz-bleed {
   margin: -15px 0 0 -15px;
   border-radius: 50%;
   background: rgba(12, 12, 14, 0.72);
-  color: var(--accent, #5ac88c);
+  color: var(--accent, var(--accent));
   box-shadow: 0 0 16px 2px rgba(var(--badge-glow, 90, 200, 140), 0.45);
   opacity: 0;
   pointer-events: none;

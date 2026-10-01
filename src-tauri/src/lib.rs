@@ -34,7 +34,7 @@ use tauri::{
 const EDGE_TRIGGER_PX: i32 = 3;
 const EDGE_POLL_MS: u64 = 16;
 const HIDDEN_OFFSET: i32 = 200; // how far above the monitor top the pill parks while hidden
-const PEEK_MARGIN: i32 = 4; // how far below the monitor top the pill sits while shown
+const PEEK_MARGIN: i32 = 4; // how far from the monitor's side edges the pill keeps (its distance from the top is a setting)
 const HIDE_SECS: f64 = 0.45; // length of the slide-away animation
 const NUDGE_EASE: f64 = 0.16; // per-tick ease for horizontal cursor-follow while shown (a live target, not a spring-to-rest animation)
 
@@ -50,17 +50,20 @@ const GLOW_PAD: f64 = 44.0;
 // REVEAL_SECS is how long that lasts
 const REVEAL_SECS: f64 = 0.6;
 
+/// the width of the standard collapsed island (the media and work pills) before the setting
+const COMPACT_BASE: f64 = 260.0;
 const IDLE_SIZE: (f64, f64) = (140.0, 28.0);
 const MEDIA_COMPACT_SIZE: (f64, f64) = (260.0, 40.0);
 const GAME_SIZE: (f64, f64) = (320.0, 40.0);
 const WORK_SIZE: (f64, f64) = (260.0, 40.0);
-// the notification banner and the session pill are as wide as the collapsed (idle) island
-const NOTIF_SIZE: (f64, f64) = (IDLE_SIZE.0, 72.0);
+// the notification banner and the session pill take the width of the collapsed island they drop over
+const NOTIF_SIZE: (f64, f64) = (IDLE_SIZE.0, 72.0); // (the width follows the collapsed view, see view_size)
 const USAGE_PEEK_SIZE: (f64, f64) = (240.0, 78.0);
 const BRIEF_SIZE: (f64, f64) = (IDLE_SIZE.0, 40.0);
 // settle (bars sit at the old value) + fill animation + hold, ms
 pub(crate) const USAGE_PEEK_TOTAL_MS: u64 = 500 + 1400 + 2500;
-// the hub is HUB_WIDTH wide and as tall as its content, between the two heights
+// the hub is as tall as its content, between the two heights, and as wide as the setting says
+// (this is only the default)
 const HUB_WIDTH: f64 = 420.0;
 const HUB_MIN_H: f64 = 150.0;
 const HUB_MAX_H: f64 = 520.0;
@@ -79,13 +82,16 @@ enum PillView {
     Hub,
 }
 
-/// the size of a view, with the collapsed views' width scaled by the "island width" setting
-fn view_size(view: PillView, width_pct: u64) -> (f64, f64) {
+/// the size of a view. `width` is the setting for the standard collapsed island (px): the media and
+/// work pills, the notification banner and the session pill are that wide, the others (idle, game,
+/// usage peek) keep their proportions to it.
+fn view_size(view: PillView, width: u64, hub_w: f64) -> (f64, f64) {
     let (w, h) = view.size();
-    if view == PillView::Hub {
-        (w, h)
-    } else {
-        (w * width_pct as f64 / 100.0, h)
+    let k = width as f64 / COMPACT_BASE;
+    match view {
+        PillView::Hub => (hub_w, h),
+        PillView::Notification | PillView::Brief => (width as f64, h),
+        _ => (w * k, h),
     }
 }
 
@@ -199,6 +205,10 @@ pub(crate) struct IslandState {
     pin_shrink: AtomicU64,
     /// width (percent) of the collapsed island; the hub keeps its own width
     compact_width: AtomicU64,
+    /// width (logical px) of the expanded island
+    hub_width: AtomicU64,
+    /// how far below the top edge (logical px) the island sits while shown
+    top_margin: AtomicU64,
     show_at_cursor: AtomicBool,
     /// right-click pin: the island stays put (no idle-hide, no dash to another
     /// monitor, hub survives click-outside) until right-clicked again
@@ -243,7 +253,9 @@ impl Default for IslandState {
             peek_ms: AtomicU64::new(loaded.peek_duration_s.max(1) * 1000),
             edge_dwell_ms: AtomicU64::new(loaded.edge_dwell_ms),
             pin_shrink: AtomicU64::new(loaded.pin_shrink.clamp(30, 100)),
-            compact_width: AtomicU64::new(loaded.compact_width.clamp(60, 160)),
+            compact_width: AtomicU64::new(settings::compact_px(loaded.compact_width)),
+            hub_width: AtomicU64::new(loaded.hub_width.clamp(340, 640)),
+            top_margin: AtomicU64::new(loaded.top_margin.clamp(0, 80)),
             peek_request: AtomicBool::new(false),
             show_at_cursor: AtomicBool::new(loaded.show_at_cursor),
             pinned: AtomicBool::new(false),
@@ -468,8 +480,14 @@ fn spawn_edge_poll(window: WebviewWindow) {
         pos_x += pad_full;
         pos_y += pad_full;
         let mut applied_width = state.compact_width.load(Ordering::Relaxed);
-        win_w = IDLE_SIZE.0 * scale * applied_width as f64 / 100.0;
+        win_w = IDLE_SIZE.0 * scale * applied_width as f64 / COMPACT_BASE;
         win_h = IDLE_SIZE.1 * scale;
+        // the window setup() parked was sized for the plain 140 px pill, without the margin or the
+        // width setting: centre the island itself on the screen instead of trusting that position
+        let screen_mid = state.center_x.load(Ordering::Relaxed);
+        if screen_mid != 0 {
+            pos_x = screen_mid as f64 - win_w / 2.0;
+        }
         let hwnd = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
         winutil::fine_timer();
         let mut placed = (i32::MIN, 0, 0, 0);
@@ -512,6 +530,7 @@ fn spawn_edge_poll(window: WebviewWindow) {
         let mut hide_anim: Option<(f64, f64, f64, f64, f64)> = None;
         // the hub height (logical px) the current size animation was aimed at
         let mut applied_hub_h = HUB_MAX_H;
+        let mut applied_hub_w = state.hub_width.load(Ordering::Relaxed) as f64;
         // edge dwell: seconds the cursor has rested at the top edge, and whether
         // the window is currently held at the edge for the glow
         let mut charge_t = 0.0_f64;
@@ -534,7 +553,9 @@ fn spawn_edge_poll(window: WebviewWindow) {
             let real_dt = last_tick.elapsed().as_secs_f64().min(0.1);
             last_tick = Instant::now();
             let wpct = state.compact_width.load(Ordering::Relaxed);
-
+            let hub_w = state.hub_width.load(Ordering::Relaxed) as f64;
+            // distance from the top edge, physical px
+            let top_px = (state.top_margin.load(Ordering::Relaxed) as f64 * scale).round() as i32;
             let (cx, cy) = winutil::cursor_pos();
             let geo = winutil::monitor_geometry_at(cx, cy);
             let Some(cursor_geo) = geo else { continue };
@@ -625,7 +646,7 @@ fn spawn_edge_poll(window: WebviewWindow) {
             };
             if want_view != current_view {
                 current_view = want_view;
-                let (lw, mut lh) = view_size(want_view, wpct);
+                let (lw, mut lh) = view_size(want_view, wpct, hub_w);
                 if want_view == PillView::Hub {
                     lh = state.hub_height.load(Ordering::Relaxed) as f64;
                     applied_hub_h = lh;
@@ -646,7 +667,7 @@ fn spawn_edge_poll(window: WebviewWindow) {
             if wpct != applied_width {
                 applied_width = wpct;
                 if current_view != PillView::Hub && !charge_big {
-                    let (lw, lh) = view_size(current_view, wpct);
+                    let (lw, lh) = view_size(current_view, wpct, hub_w);
                     size_anim = Some((lw * scale, lh * scale, pos_x + win_w / 2.0));
                     vel_w = 0.0;
                     vel_h = 0.0;
@@ -657,10 +678,11 @@ fn spawn_edge_poll(window: WebviewWindow) {
             // (keeps the current velocity, so it just eases to the new height)
             if current_view == PillView::Hub {
                 let want_h = state.hub_height.load(Ordering::Relaxed) as f64;
-                if (want_h - applied_hub_h).abs() >= 1.0 {
+                if (want_h - applied_hub_h).abs() >= 1.0 || (hub_w - applied_hub_w).abs() >= 1.0 {
                     applied_hub_h = want_h;
+                    applied_hub_w = hub_w;
                     let anchor = size_anim.map_or(pos_x + win_w / 2.0, |a| a.2);
-                    size_anim = Some((HUB_WIDTH * scale, want_h * scale, anchor));
+                    size_anim = Some((hub_w * scale, want_h * scale, anchor));
                 }
             }
 
@@ -711,7 +733,7 @@ fn spawn_edge_poll(window: WebviewWindow) {
             let mut charge_ready = false;
             if want_charge {
                 if !charge_big {
-                    let (lw, lh) = view_size(current_view, wpct);
+                    let (lw, lh) = view_size(current_view, wpct, hub_w);
                     let mid = if state.show_at_cursor.load(Ordering::Relaxed) {
                         cx as f64
                     } else {
@@ -723,7 +745,7 @@ fn spawn_edge_poll(window: WebviewWindow) {
                         .max((geo.x + PEEK_MARGIN) as f64)
                         .min((geo.x + geo.width - PEEK_MARGIN) as f64 - win_w);
                     // the island is still out of sight (hidden), so the window can jump there
-                    pos_y = (geo.y + PEEK_MARGIN) as f64;
+                    pos_y = (geo.y + top_px) as f64;
                     vel_y = 0.0;
                     charge_big = true;
                 }
@@ -792,7 +814,7 @@ fn spawn_edge_poll(window: WebviewWindow) {
             }
             let edge_y = geo.y + EDGE_TRIGGER_PX;
             let hidden_y = (geo.y - HIDDEN_OFFSET) as f64;
-            let peek_y = (geo.y + PEEK_MARGIN) as f64;
+            let peek_y = (geo.y + top_px) as f64;
 
             if dragging {
                 // manual, X-only-from-the-user's-perspective drag -- see
@@ -809,7 +831,7 @@ fn spawn_edge_poll(window: WebviewWindow) {
                 pos_x = target_x
                     .max((geo.x + PEEK_MARGIN) as f64)
                     .min((geo.x + geo.width - PEEK_MARGIN) as f64 - win_w);
-                pos_y = (geo.y + PEEK_MARGIN) as f64;
+                pos_y = (geo.y + top_px) as f64;
                 place_window(hwnd, &mut placed, pos_x, pos_y, win_w, win_h, pad);
             } else {
                 let cursor_at_edge = cy <= edge_y;
@@ -995,8 +1017,8 @@ fn spawn_edge_poll(window: WebviewWindow) {
                         big: charge_big,
                         pad: pad / scale,
                         edge: (geo.y as f64 - (pos_y - pad)) / scale,
-                        pill_top: (geo.y as f64 - pos_y + PEEK_MARGIN as f64) / scale,
-                        pill_w: view_size(current_view, wpct).0,
+                        pill_top: (geo.y as f64 - pos_y + top_px as f64) / scale,
+                        pill_w: view_size(current_view, wpct, hub_w).0,
                         pill_h: if current_view == PillView::Hub {
                             state.hub_height.load(Ordering::Relaxed) as f64
                         } else {
@@ -1030,6 +1052,8 @@ pub fn run() {
             media::media_next,
             media::media_previous,
             media::media_seek,
+            media::media_seek_by,
+            media::media_set_rate,
             settings::get_settings,
             calendar::get_calendar,
             activity::get_activity,

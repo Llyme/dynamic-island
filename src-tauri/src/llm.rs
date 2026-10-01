@@ -80,12 +80,141 @@ struct Host {
 struct Cache {
     parsed: HashMap<PathBuf, (SystemTime, u64, Parsed)>,
     paths: HashMap<String, (PathBuf, Instant)>,
-    hosts: HashMap<u32, Host>,
+    hosts: HashMap<String, Host>,
 }
 
 fn cache() -> &'static Mutex<Cache> {
     static C: OnceLock<Mutex<Cache>> = OnceLock::new();
     C.get_or_init(|| Mutex::new(Cache { parsed: HashMap::new(), paths: HashMap::new(), hosts: HashMap::new() }))
+}
+
+/// where Claude Code keeps its files: this Windows account, and each running WSL distro
+#[derive(Clone)]
+struct Root {
+    /// the `.claude` folder
+    dir: PathBuf,
+    /// the distro and its file system as Windows sees it (`\\wsl.localhost\<distro>`); None = Windows
+    wsl: Option<(String, PathBuf)>,
+}
+
+struct Reg {
+    root: Root,
+    reg: Value,
+}
+
+#[derive(Default)]
+struct WslCache {
+    at: Option<std::time::Instant>,
+    roots: Vec<Root>,
+    busy: bool,
+}
+
+/// The `.claude` folders of the WSL distros that are running now. Reading a stopped distro's file
+/// system would start it, so only running ones are looked at. The list is found by a short
+/// `wsl.exe` call on a background thread (at most every 15 s); until it answers, there are none.
+fn wsl_roots() -> Vec<Root> {
+    static W: OnceLock<Mutex<WslCache>> = OnceLock::new();
+    let m = W.get_or_init(|| Mutex::new(WslCache::default()));
+    let mut w = m.lock().unwrap();
+    let stale = w.at.map_or(true, |t| t.elapsed() > Duration::from_secs(15));
+    if stale && !w.busy {
+        w.busy = true;
+        std::thread::spawn(|| {
+            let roots = scan_wsl();
+            let mut w = W.get().unwrap().lock().unwrap();
+            w.roots = roots;
+            w.at = Some(std::time::Instant::now());
+            w.busy = false;
+        });
+    }
+    w.roots.clone()
+}
+
+/// `wsl.exe` prints UTF-16 when it writes to a pipe
+fn decode_wsl_output(b: &[u8]) -> String {
+    if b.contains(&0) {
+        let u: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        String::from_utf16_lossy(&u)
+    } else {
+        String::from_utf8_lossy(b).into_owned()
+    }
+}
+
+fn running_distros(out: &str) -> Vec<String> {
+    out.lines()
+        .map(|l| l.trim_matches(|c: char| c == '\0' || c == '\u{feff}' || c.is_whitespace()))
+        // the helper distros of Docker Desktop hold no sessions; a sentence is a message, not a name
+        .filter(|l| !l.is_empty() && !l.contains(' ') && !l.starts_with("docker-desktop"))
+        .map(str::to_string)
+        .collect()
+}
+
+fn scan_wsl() -> Vec<Root> {
+    use std::os::windows::process::CommandExt;
+    let Some(win) = std::env::var_os("SystemRoot") else { return Vec::new() };
+    let exe = PathBuf::from(win).join("System32").join("wsl.exe");
+    if !exe.is_file() {
+        return Vec::new();
+    }
+    let Ok(out) = std::process::Command::new(exe).args(["-l", "--running", "-q"]).creation_flags(0x0800_0000).output() else { return Vec::new() };
+    let mut roots = Vec::new();
+    for name in running_distros(&decode_wsl_output(&out.stdout)) {
+        let Some(base) = [format!(r"\\wsl.localhost\{name}"), format!(r"\\wsl$\{name}")].into_iter().map(PathBuf::from).find(|b| b.join("home").is_dir() || b.join("root").is_dir()) else { continue };
+        let mut homes = vec![base.join("root")];
+        if let Ok(rd) = std::fs::read_dir(base.join("home")) {
+            homes.extend(rd.flatten().map(|e| e.path()));
+        }
+        for h in homes {
+            let dir = h.join(".claude");
+            if dir.join("sessions").is_dir() {
+                roots.push(Root { dir, wsl: Some((name.clone(), base.clone())) });
+            }
+        }
+    }
+    roots
+}
+
+fn roots() -> Vec<Root> {
+    let mut v: Vec<Root> = claude_dir().map(|dir| Root { dir, wsl: None }).into_iter().collect();
+    v.extend(wsl_roots());
+    v
+}
+
+/// is the process of a session still there? In WSL it is the distro's /proc that knows (a Linux
+/// process id means nothing to Windows); when /proc cannot be read, a session that changed
+/// within the last few hours counts.
+fn session_alive(root: &Root, pid: u32, reg: &Value) -> bool {
+    let Some((_, base)) = &root.wsl else { return crate::game::pid_alive(pid) };
+    let proc = base.join("proc");
+    if proc.join(pid.to_string()).exists() {
+        return true;
+    }
+    if proc.join("1").exists() {
+        return false;
+    }
+    let updated = reg.get("statusUpdatedAt").or_else(|| reg.get("startedAt")).and_then(Value::as_u64).unwrap_or(0);
+    now_ms().saturating_sub(updated) < 6 * 3600 * 1000
+}
+
+/// the registry file of every Claude Code session on this machine (and in its running WSL distros)
+fn registries(alive_only: bool) -> Vec<Reg> {
+    let mut out = Vec::new();
+    for root in roots() {
+        let Ok(rd) = std::fs::read_dir(root.dir.join("sessions")) else { continue };
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.extension().map_or(true, |x| x != "json") {
+                continue;
+            }
+            let Some(reg) = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { continue };
+            let Some(pid) = reg.get("pid").and_then(Value::as_u64) else { continue };
+            if alive_only && !session_alive(&root, pid as u32, &reg) {
+                continue;
+            }
+            out.push(Reg { root: root.clone(), reg });
+        }
+    }
+    out
 }
 
 fn claude_dir() -> Option<PathBuf> {
@@ -161,10 +290,7 @@ fn dismissed() -> &'static Mutex<HashMap<String, u64>> {
 /// the person looked at a finished session: its card goes away until it finishes something new
 #[tauri::command]
 pub fn llm_dismiss(id: String) {
-    let Some(claude) = claude_dir() else { return };
-    let Ok(rd) = std::fs::read_dir(claude.join("sessions")) else { return };
-    for e in rd.flatten() {
-        let Some(reg) = std::fs::read_to_string(e.path()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { continue };
+    for Reg { reg, .. } in registries(false) {
         if reg.get("sessionId").and_then(Value::as_str) == Some(id.as_str()) {
             let started = reg.get("startedAt").and_then(Value::as_u64).unwrap_or(0);
             let updated = reg.get("statusUpdatedAt").and_then(Value::as_u64).unwrap_or(started);
@@ -281,8 +407,12 @@ fn parsed(path: &Path) -> Parsed {
 
 /// the window a session runs in: VS Code, Cursor, Windows Terminal... found by walking up the
 /// process tree once per session (cached)
-fn host_of(pid: u32, entrypoint: &str) -> Host {
-    if let Some(h) = cache().lock().unwrap().hosts.get(&pid) {
+fn host_of(root: &Root, pid: u32, entrypoint: &str) -> Host {
+    let key = match &root.wsl {
+        Some((distro, _)) => format!("wsl:{distro}:{pid}"),
+        None => pid.to_string(),
+    };
+    if let Some(h) = cache().lock().unwrap().hosts.get(&key) {
         return h.clone();
     }
     let (label, icon) = match entrypoint {
@@ -294,24 +424,39 @@ fn host_of(pid: u32, entrypoint: &str) -> Host {
     let mut sys = System::new();
     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet));
     let mut exe: Option<String> = None;
-    let mut cur = sysinfo::Pid::from_u32(pid);
-    for _ in 0..8 {
-        let Some(parent) = sys.process(cur).and_then(|p| p.parent()) else { break };
-        let Some(pp) = sys.process(parent) else { break };
-        let name = pp.name().to_string_lossy().to_lowercase();
-        if ["code.exe", "cursor.exe", "windowsterminal.exe", "code - insiders.exe", "windsurf.exe"].contains(&name.as_str()) {
-            exe = pp.exe().map(|p| p.to_string_lossy().to_string());
-            // keep walking: the topmost window process is the one with the windows
+    if root.wsl.is_some() {
+        // the process tree is Linux's, out of sight: the window is whichever editor or terminal
+        // of that kind is running on Windows (the window is then picked by the project's name)
+        let want: &[&str] = if icon == "code" {
+            &["code.exe", "cursor.exe", "code - insiders.exe", "windsurf.exe"]
+        } else {
+            &["windowsterminal.exe", "wezterm-gui.exe", "alacritty.exe"]
+        };
+        exe = sys
+            .processes()
+            .values()
+            .find(|p| want.contains(&p.name().to_string_lossy().to_lowercase().as_str()))
+            .and_then(|p| p.exe().map(|e| e.to_string_lossy().to_string()));
+    } else {
+        let mut cur = sysinfo::Pid::from_u32(pid);
+        for _ in 0..8 {
+            let Some(parent) = sys.process(cur).and_then(|p| p.parent()) else { break };
+            let Some(pp) = sys.process(parent) else { break };
+            let name = pp.name().to_string_lossy().to_lowercase();
+            if ["code.exe", "cursor.exe", "windowsterminal.exe", "code - insiders.exe", "windsurf.exe"].contains(&name.as_str()) {
+                exe = pp.exe().map(|p| p.to_string_lossy().to_string());
+                // keep walking: the topmost window process is the one with the windows
+                cur = parent;
+                continue;
+            }
+            if exe.is_none() && ["pwsh.exe", "powershell.exe", "cmd.exe"].contains(&name.as_str()) {
+                exe = pp.exe().map(|p| p.to_string_lossy().to_string());
+            }
             cur = parent;
-            continue;
         }
-        if exe.is_none() && ["pwsh.exe", "powershell.exe", "cmd.exe"].contains(&name.as_str()) {
-            exe = pp.exe().map(|p| p.to_string_lossy().to_string());
-        }
-        cur = parent;
     }
     let host = Host { label: label.to_string(), icon, exe };
-    cache().lock().unwrap().hosts.insert(pid, host.clone());
+    cache().lock().unwrap().hosts.insert(key, host.clone());
     host
 }
 
@@ -344,20 +489,11 @@ fn now_ms() -> u64 {
 
 /// every running Claude Code session: the ones waiting for you first, then working, then idle
 pub fn cards() -> Vec<LlmCard> {
-    let Some(claude) = claude_dir() else { return Vec::new() };
-    let Ok(rd) = std::fs::read_dir(claude.join("sessions")) else { return Vec::new() };
     let mut out: Vec<(u64, LlmCard)> = Vec::new();
-    for e in rd.flatten() {
-        let path = e.path();
-        if path.extension().map_or(true, |x| x != "json") {
-            continue;
-        }
-        let Some(reg) = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { continue };
+    for Reg { root, reg } in registries(true) {
+        let claude = root.dir.clone();
         let (Some(pid), Some(id)) = (reg.get("pid").and_then(Value::as_u64), reg.get("sessionId").and_then(Value::as_str)) else { continue };
         let pid = pid as u32;
-        if !crate::game::pid_alive(pid) {
-            continue;
-        }
         let str_of = |k: &str| reg.get(k).and_then(Value::as_str).unwrap_or("");
         if !matches!(str_of("kind"), "interactive" | "") {
             continue;
@@ -399,7 +535,7 @@ pub fn cards() -> Vec<LlmCard> {
         }
         let cwd = str_of("cwd");
         let project = basename(cwd);
-        let host = host_of(pid, str_of("entrypoint"));
+        let host = host_of(&root, pid, str_of("entrypoint"));
         let model = t.model.clone().unwrap_or_default();
         // needs you > finished > the others (working, then idle); the most recent first within each
         let rank = match state {
@@ -448,17 +584,10 @@ struct Live {
 }
 
 fn live_sessions() -> Vec<Live> {
-    let Some(claude) = claude_dir() else { return Vec::new() };
-    let Ok(rd) = std::fs::read_dir(claude.join("sessions")) else { return Vec::new() };
     let mut best: HashMap<String, Live> = HashMap::new();
-    for e in rd.flatten() {
-        let path = e.path();
-        if path.extension().map_or(true, |x| x != "json") {
-            continue;
-        }
-        let Some(reg) = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { continue };
-        let (Some(pid), Some(id)) = (reg.get("pid").and_then(Value::as_u64), reg.get("sessionId").and_then(Value::as_str)) else { continue };
-        if !crate::game::pid_alive(pid as u32) || !matches!(reg.get("kind").and_then(Value::as_str).unwrap_or(""), "interactive" | "") {
+    for Reg { reg, .. } in registries(true) {
+        let Some(id) = reg.get("sessionId").and_then(Value::as_str) else { continue };
+        if !matches!(reg.get("kind").and_then(Value::as_str).unwrap_or(""), "interactive" | "") {
             continue;
         }
         let status = reg.get("status").and_then(Value::as_str).unwrap_or("");
@@ -592,6 +721,25 @@ mod tests {
         assert_eq!(model_name("claude-haiku-4-5-20251001"), "Haiku 4.5");
         assert_eq!(model_name("claude-fable-5-1"), "Fable 5.1");
         assert_eq!(model_name(""), "");
+    }
+
+    #[test]
+    fn reads_the_list_of_running_distros() {
+        // wsl.exe writes UTF-16 with a byte order mark and CRLF line ends
+        let text = "\u{feff}Ubuntu-22.04\r\ndocker-desktop\r\n\r\n";
+        let bytes: Vec<u8> = text.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        assert_eq!(running_distros(&decode_wsl_output(&bytes)), ["Ubuntu-22.04"]);
+        // the plain-text message of an older wsl.exe is not a distro
+        assert!(running_distros("There are no running distributions.\r\n").is_empty());
+    }
+
+    #[test]
+    fn a_wsl_session_without_a_readable_proc_counts_while_it_is_recent() {
+        let root = Root { dir: PathBuf::from(r"Z:\none\.claude"), wsl: Some(("x".into(), PathBuf::from(r"Z:\none"))) };
+        let fresh = serde_json::json!({ "statusUpdatedAt": now_ms() });
+        let old = serde_json::json!({ "statusUpdatedAt": 1u64 });
+        assert!(session_alive(&root, 4242, &fresh));
+        assert!(!session_alive(&root, 4242, &old));
     }
 
     #[test]

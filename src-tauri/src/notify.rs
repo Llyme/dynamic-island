@@ -13,6 +13,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const NOTIF_MS: u64 = 4000;
 const HISTORY_CAP: usize = 50;
+/// a chat app that sends more than this many notifications at once (not yet looked at) is
+/// shown as one "N new messages" instead
+const GROUP_AFTER: u32 = 3;
 
 /// a Claude Code session that needs you, or finished: shown as a compact pill, not a banner
 #[derive(Clone, Serialize)]
@@ -60,6 +63,8 @@ pub struct HistoryEntry {
     /// `new Date(ms)` rather than this side rendering a locale-specific string
     pub time_ms: u64,
     pub action: Option<String>,
+    /// how many messages this entry stands for (more than 1 once they were combined)
+    pub count: u32,
 }
 
 #[derive(Default)]
@@ -86,12 +91,25 @@ impl NotifState {
         // banners still waiting to show) keeps only the latest, at the top
         self.history.retain(|e| !(e.title == title && e.body == body && e.action == action));
         self.queue.retain(|n| !(n.title == title && n.body == body && n.action == action));
+        // too many from one chat app: they become one entry that counts them
+        let (mut title, mut body, mut count) = (title, body, 1u32);
+        if action.as_deref() == Some("discord") {
+            let before: u32 = self.history.iter().filter(|e| e.action == action).map(|e| e.count).sum();
+            if before + 1 > GROUP_AFTER {
+                count = before + 1;
+                self.history.retain(|e| e.action != action);
+                self.queue.retain(|n| n.action != action);
+                title = "Discord".into();
+                body = format!("{count} new messages");
+            }
+        }
         self.history.push_front(HistoryEntry {
             id: self.next_id,
             title: title.clone(),
             body: body.clone(),
             time_ms,
             action: action.clone(),
+            count,
         });
         self.history.truncate(HISTORY_CAP);
         self.queue.push_back(Notification { id: self.next_id, title, body, action, brief: None });
@@ -200,6 +218,25 @@ mod tests {
         assert_eq!(order, ["asks too", "Mail", "done again"]);
         // briefs never reach the scrollback
         assert_eq!(n.history().len(), 1);
+    }
+
+    #[test]
+    fn many_discord_messages_become_one() {
+        let mut n = NotifState::default();
+        for (who, text) in [("Ann", "hi"), ("Bo", "hello"), ("Cy", "hey")] {
+            n.push_action(who.into(), text.into(), Some("discord".into()));
+        }
+        assert_eq!(n.history().len(), 3); // up to three stay as they are
+        n.push_action("Di".into(), "yo".into(), Some("discord".into()));
+        let h = n.history();
+        assert_eq!(h.len(), 1);
+        assert_eq!((h[0].title.as_str(), h[0].body.as_str(), h[0].count), ("Discord", "4 new messages", 4));
+        assert_eq!(n.queue.len(), 1);
+        n.push_action("Ed".into(), "sup".into(), Some("discord".into()));
+        assert_eq!(n.history()[0].body, "5 new messages");
+        // other apps are left alone
+        n.push_action("Mail".into(), "x".into(), None);
+        assert_eq!(n.history().len(), 2);
     }
 
     #[test]

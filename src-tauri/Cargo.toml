@@ -1,6 +1,6 @@
 [package]
 name = "nadi"
-version = "0.1.0"
+version = "1.0.0"
 description = "NADI (Not Another Dynamic Island): a dynamic island for Windows with media controls, game/work/download cards and notifications."
 edition = "2021"
 

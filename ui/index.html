@@ -134,6 +134,14 @@
                 <span>Follow Cursor</span>
                 <input type="checkbox" id="set-cursor-follow" />
               </label>
+              <div class="hub-row">
+                <span>Theme</span>
+                <span class="hub-row-value swatches" id="set-accent"></span>
+              </div>
+              <label class="hub-row">
+                <span>Eyes</span>
+                <input type="checkbox" id="set-show-eyes" />
+              </label>
               <label class="hub-row">
                 <span>Sound</span>
                 <input type="checkbox" id="set-react-to-audio" />
@@ -141,49 +149,63 @@
               <label class="hub-row">
                 <span>Ambient</span>
                 <span class="hub-row-value">
-                  <input type="range" id="set-audio-bleed" min="0" max="100" step="5" />
+                  <input type="range" id="set-audio-bleed" data-default="60" min="0" max="100" step="5" />
                   <span id="set-audio-bleed-label"></span>
                 </span>
               </label>
               <label class="hub-row">
                 <span>Hover Delay</span>
                 <span class="hub-row-value">
-                  <input type="range" id="set-edge-dwell" min="0" max="1000" step="50" />
+                  <input type="range" id="set-edge-dwell" data-default="300" min="0" max="1000" step="50" />
                   <span id="set-edge-dwell-label"></span>
                 </span>
               </label>
               <label class="hub-row">
                 <span>Hide Delay</span>
                 <span class="hub-row-value">
-                  <input type="range" id="set-idle-hide-delay" min="1" max="15" step="1" />
+                  <input type="range" id="set-idle-hide-delay" data-default="1" min="1" max="15" step="1" />
                   <span id="set-idle-hide-delay-label"></span>
                 </span>
               </label>
               <label class="hub-row">
                 <span>Width</span>
                 <span class="hub-row-value">
-                  <input type="range" id="set-compact-width" min="70" max="150" step="5" />
+                  <input type="range" id="set-compact-width" data-default="260" min="180" max="560" step="10" />
                   <span id="set-compact-width-label"></span>
+                </span>
+              </label>
+              <label class="hub-row">
+                <span>Hub Width</span>
+                <span class="hub-row-value">
+                  <input type="range" id="set-hub-width" data-default="420" min="340" max="640" step="10" />
+                  <span id="set-hub-width-label"></span>
+                </span>
+              </label>
+              <label class="hub-row">
+                <span>Top Distance</span>
+                <span class="hub-row-value">
+                  <input type="range" id="set-top-margin" data-default="4" min="0" max="80" step="2" />
+                  <span id="set-top-margin-label"></span>
                 </span>
               </label>
               <label class="hub-row">
                 <span>Pinned Size</span>
                 <span class="hub-row-value">
-                  <input type="range" id="set-pin-shrink" min="40" max="100" step="5" />
+                  <input type="range" id="set-pin-shrink" data-default="75" min="40" max="100" step="5" />
                   <span id="set-pin-shrink-label"></span>
                 </span>
               </label>
               <label class="hub-row">
                 <span>Peek</span>
                 <span class="hub-row-value">
-                  <input type="range" id="set-peek-duration" min="1" max="15" step="1" />
+                  <input type="range" id="set-peek-duration" data-default="3" min="1" max="15" step="1" />
                   <span id="set-peek-duration-label"></span>
                 </span>
               </label>
               <label class="hub-row">
                 <span>Glow</span>
                 <span class="hub-row-value">
-                  <input type="range" id="set-glow" min="0" max="100" step="5" />
+                  <input type="range" id="set-glow" data-default="70" min="0" max="100" step="5" />
                   <span id="set-glow-label"></span>
                 </span>
               </label>
@@ -210,7 +232,7 @@
               <label class="hub-row">
                 <span>Dim</span>
                 <span class="hub-row-value">
-                  <input type="range" id="set-bg-dim" min="0" max="90" step="5" />
+                  <input type="range" id="set-bg-dim" data-default="50" min="0" max="90" step="5" />
                   <span id="set-bg-dim-label"></span>
                 </span>
               </label>
@@ -229,7 +251,7 @@
               <label class="hub-row">
                 <span>Remind</span>
                 <span class="hub-row-value">
-                  <input type="range" id="set-calendar-lead" min="1" max="60" step="1" />
+                  <input type="range" id="set-calendar-lead" data-default="15" min="1" max="60" step="1" />
                   <span id="set-calendar-lead-label"></span>
                 </span>
               </label>
@@ -250,7 +272,13 @@
                   <button id="hub-media-next" data-tip="Next">⏭</button>
                 </div>
               </div>
-              <div id="hub-media-seek" class="now-seek hidden"><div id="hub-media-seek-fill"></div></div>
+              <div id="hub-media-extra" class="media-extra">
+                <button id="hub-media-back" class="media-jump" data-tip="Back 5 seconds"></button>
+                <div id="hub-media-seek" class="now-seek hidden"><div id="hub-media-seek-fill"></div></div>
+                <button id="hub-media-fwd" class="media-jump" data-tip="Forward 5 seconds"></button>
+                <button id="hub-media-rate" class="media-rate" data-tip="Playback speed"><span id="hub-media-rate-label">1×</span></button>
+              </div>
+              <div id="hub-media-rates" class="rate-menu hidden"></div>
             </div>
             <div id="now-cards" class="flat"></div>
             <div id="calendar-status" class="notif-history-empty"></div>

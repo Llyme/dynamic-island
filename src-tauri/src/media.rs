@@ -34,6 +34,12 @@ pub struct MediaSnapshot {
     pub duration: f64,
     pub can_previous: bool,
     pub can_next: bool,
+    /// the player takes seeks (jump 5 s, the seek bar)
+    pub can_seek: bool,
+    /// the player takes a playback speed
+    pub can_rate: bool,
+    /// playback speed, 1.0 = normal
+    pub rate: f64,
     /// data: URL (PNG), ready to drop straight into an <img src>.
     pub art: Option<String>,
     /// the playing app's AppUserModelId (used to focus its window from the hub card)
@@ -71,7 +77,10 @@ fn read_snapshot(session: &Session) -> windows::core::Result<Option<MediaSnapsho
         }
     }
 
+    let rate = playback.PlaybackRate().ok().and_then(|r| r.Value().ok()).filter(|r| *r > 0.0).unwrap_or(1.0);
     let controls = playback.Controls().ok();
+    let can_seek = controls.as_ref().and_then(|c| c.IsPlaybackPositionEnabled().ok()).unwrap_or(false);
+    let can_rate = controls.as_ref().and_then(|c| c.IsPlaybackRateEnabled().ok()).unwrap_or(false);
     let can_previous = controls
         .as_ref()
         .and_then(|c| c.IsPreviousEnabled().ok())
@@ -92,6 +101,9 @@ fn read_snapshot(session: &Session) -> windows::core::Result<Option<MediaSnapsho
         duration,
         can_previous,
         can_next,
+        can_seek,
+        can_rate,
+        rate,
         art,
         source: session
             .SourceAppUserModelId()
@@ -199,3 +211,41 @@ pub fn media_seek(position_seconds: f64) {
         s.TryChangePlaybackPositionAsync(ticks)?.get().map(|_| ())
     });
 }
+
+/// jump forward (positive) or back (negative) by some seconds, from where the player is now:
+/// the timeline's position is the one it last reported, so the time since then is added (at
+/// the playback speed) while it plays
+#[tauri::command]
+pub fn media_seek_by(delta_seconds: f64) {
+    with_current_session(|s| {
+        let tl = s.GetTimelineProperties()?;
+        let playback = s.GetPlaybackInfo()?;
+        let playing = playback.PlaybackStatus()? == PlaybackStatus::Playing;
+        let rate = playback.PlaybackRate().ok().and_then(|r| r.Value().ok()).filter(|r| *r > 0.0).unwrap_or(1.0);
+        let start = tl.StartTime()?.Duration as f64 / 10_000_000.0;
+        let end = tl.EndTime()?.Duration as f64 / 10_000_000.0;
+        let mut pos = tl.Position()?.Duration as f64 / 10_000_000.0;
+        if playing {
+            // `LastUpdatedTime` is a Windows FILETIME-style count of 100 ns since 1601
+            let updated = tl.LastUpdatedTime()?.UniversalTime as f64 / 10_000_000.0;
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) + 11_644_473_600.0;
+            let since = (now - updated).clamp(0.0, 30.0);
+            pos += since * rate;
+        }
+        let target = (pos + delta_seconds).clamp(start, if end > start { end } else { f64::MAX });
+        s.TryChangePlaybackPositionAsync((target * 10_000_000.0) as i64)?.get().map(|_| ())
+    });
+}
+
+/// set the playback speed (0.1 to 16); true when the player took it
+#[tauri::command]
+pub fn media_set_rate(rate: f64) -> bool {
+    let rate = rate.clamp(0.1, 16.0);
+    let mut ok = false;
+    with_current_session(|s| {
+        ok = s.TryChangePlaybackRateAsync(rate)?.get()?;
+        Ok(())
+    });
+    ok
+}
+

@@ -31,6 +31,8 @@ const ACTIVE_S: u64 = 15;
 const GONE_S: f64 = 4.0;
 /// not seen and not finished for this long: it was cancelled or paused
 const DROP_S: f64 = 20.0;
+/// still listed, not finished, but nothing moved for this long: it is stuck or paused, so it goes
+const STALL_S: f64 = 5.0;
 
 #[derive(Serialize, Clone)]
 pub struct DownloadItem {
@@ -61,6 +63,9 @@ pub struct DownloadItem {
     seen: Instant,
     #[serde(skip)]
     started: Instant,
+    /// when bytes last came in
+    #[serde(skip)]
+    moved: Instant,
 }
 
 /// what one poll saw for one active download
@@ -723,11 +728,21 @@ fn qbittorrent_running(sys: &mut sysinfo::System) -> bool {
 // ---------------------------------------------------------------------------
 // the poll loop
 
+/// downloads that were dropped for standing still: id -> the bytes they had. One that is
+/// still stuck is not listed again; it comes back when it moves.
+fn stalled() -> &'static std::sync::Mutex<HashMap<String, u64>> {
+    static S: std::sync::OnceLock<std::sync::Mutex<HashMap<String, u64>>> = std::sync::OnceLock::new();
+    S.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
 fn merge(items: &mut Vec<DownloadItem>, seen: Vec<Obs>) {
     let now = Instant::now();
     for o in seen {
         match items.iter_mut().find(|i| i.id == o.id && !i.done) {
             Some(it) => {
+                if o.received > it.received || o.speed.map_or(false, |s| s > 0.0) {
+                    it.moved = now;
+                }
                 let dt = now.duration_since(it.last_at).as_secs_f64();
                 if dt >= 0.5 {
                     let inst = o.received.saturating_sub(it.last_bytes) as f64 / dt;
@@ -748,6 +763,17 @@ fn merge(items: &mut Vec<DownloadItem>, seen: Vec<Obs>) {
                 if items.iter().any(|i| i.id == o.id) {
                     continue;
                 }
+                // one that was dropped for standing still stays off the list until it moves
+                {
+                    let mut st = stalled().lock().unwrap();
+                    match st.get(&o.id) {
+                        Some(&bytes) if o.received <= bytes && !o.speed.map_or(false, |s| s > 0.0) => continue,
+                        Some(_) => {
+                            st.remove(&o.id);
+                        }
+                        None => {}
+                    }
+                }
                 items.push(DownloadItem {
                     id: o.id,
                     source: o.source,
@@ -765,6 +791,7 @@ fn merge(items: &mut Vec<DownloadItem>, seen: Vec<Obs>) {
                     last_at: now,
                     seen: now,
                     started: now,
+                    moved: now,
                 });
             }
         }
@@ -803,6 +830,18 @@ fn merge(items: &mut Vec<DownloadItem>, seen: Vec<Obs>) {
         }
     }
     items.retain(|i| i.done || now.duration_since(i.seen).as_secs_f64() < DROP_S);
+    // listed and not finished, but nothing has moved for a while: stuck or paused
+    let mut st = stalled().lock().unwrap();
+    if st.len() > 64 {
+        st.clear();
+    }
+    items.retain(|i| {
+        let stuck = !i.done && now.duration_since(i.moved).as_secs_f64() > STALL_S;
+        if stuck {
+            st.insert(i.id.clone(), i.received);
+        }
+        !stuck
+    });
 }
 
 pub fn spawn(state: Arc<IslandState>) {
@@ -902,7 +941,7 @@ pub fn spawn(state: Arc<IslandState>) {
                     items.push(DownloadItem {
                         id: "demo:done".into(), source: "Chrome".into(), kind: "browser".into(), name: "report-final.pdf".into(),
                         received: 1, total: Some(1), speed: 0.0, done: true, exe_path: None, icon: None, open_path: None, meta: String::new(),
-                        last_bytes: 0, last_at: now, seen: now, started: now,
+                        last_bytes: 0, last_at: now, seen: now, started: now, moved: now,
                     });
                 }
                 merge(&mut items, seen);
@@ -1005,6 +1044,7 @@ mod tests {
             last_at: Instant::now(),
             seen: Instant::now(),
             started: Instant::now(),
+            moved: Instant::now(),
         };
         let items = vec![mk("a", "Steam", true), mk("b", "Steam", false), mk("c", "Chrome", false), mk("d", "qBittorrent", false), mk("e", "Steam", false)];
         let cards = cards(&items);

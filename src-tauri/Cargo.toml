@@ -1,0 +1,46 @@
+[package]
+name = "nadi"
+version = "0.1.0"
+description = "NADI (Not Another Dynamic Island): a dynamic island for Windows with media controls, game/work/download cards and notifications."
+edition = "2021"
+
+[lib]
+name = "nadi_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "process"] }
+windows = { version = "0.58", features = [
+    "Media_Control",
+    "Storage_Streams", "Media_Ocr", "Graphics_Imaging",
+    "Foundation",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+    "Win32_System_ProcessStatus",
+    "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Storage_Xps", "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_System_Com", "Win32_System_Performance", "Win32_Storage_FileSystem", "Win32_Media", "Win32_Media_Audio", "Win32_System_Diagnostics_Etw", "Win32_System_Time", "Win32_UI_Controls_Dialogs",
+    "UI_Notifications", "UI_Notifications_Management", "ApplicationModel", "Foundation_Collections",
+] }
+sysinfo = "0.32"
+base64 = "0.22"
+png = "0.17"
+winreg = "0.52"
+ureq = { version = "2", features = ["json"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1

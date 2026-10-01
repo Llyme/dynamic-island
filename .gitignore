@@ -1,0 +1,12 @@
+# Rust / Tauri build output (src-tauri/.gitignore covers target/ and gen/ too)
+target/
+
+# editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# local scratch
+*.log
+.env

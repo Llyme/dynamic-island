@@ -48,6 +48,7 @@ impl Notification {
     fn dwell(&self) -> Duration {
         Duration::from_millis(match self.brief.as_ref().map(|b| b.state) {
             Some("waiting") => 8000,
+            Some("time") => 4000,
             Some(_) => 5000,
             None => NOTIF_MS,
         })

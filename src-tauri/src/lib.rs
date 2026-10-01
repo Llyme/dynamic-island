@@ -7,6 +7,7 @@ mod focus;
 mod game;
 mod gpu;
 mod media;
+mod clock;
 mod notify;
 mod browse;
 mod downloads;
@@ -405,6 +406,26 @@ fn place_window(hwnd: isize, last: &mut (i32, i32, i32, i32), x: f64, y: f64, w:
         *last = rect;
         winutil::place(hwnd, rect.0, rect.1, rect.2, rect.3);
     }
+}
+
+/// Switch off what makes the webview behave like a browser: the accelerator keys (F5, Ctrl+R,
+/// Ctrl+P, Ctrl+F, F12...), devtools, zoom, the default context menu, swipe navigation, the status
+/// bar and autofill. Editing keys (copy, paste, select all) still work in the text fields.
+fn lock_down_webview(window: &WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows_core::Interface;
+    let _ = window.with_webview(|wv| unsafe {
+        let Ok(core) = wv.controller().CoreWebView2() else { return };
+        let Ok(settings) = core.Settings() else { return };
+        let _ = settings.SetAreDefaultContextMenusEnabled(false);
+        let _ = settings.SetAreDevToolsEnabled(false);
+        let _ = settings.SetIsZoomControlEnabled(false);
+        let _ = settings.SetIsStatusBarEnabled(false);
+        let _ = settings.SetIsBuiltInErrorPageEnabled(false);
+        if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
+            let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+        }
+    });
 }
 
 fn lerp(current: f64, target: f64, ease: f64) -> f64 {
@@ -1060,6 +1081,7 @@ pub fn run() {
             gpu::get_gpu_pct,
             gamestats::get_game_stats,
             llm::llm_dismiss,
+            clock::time_preview,
             usage::get_usage,
             usage::refresh_usage,
             stats::get_sys_stats,
@@ -1069,6 +1091,9 @@ pub fn run() {
         ])
         .setup(|app| {
             let window = app.get_webview_window("island").expect("island window must exist");
+
+            // the island is not a browser page: no refresh, print, find, devtools, zoom, context menu...
+            lock_down_webview(&window);
 
             // park off-screen above the primary monitor's top edge until the
             // edge-poll loop's first tick decides whether to reveal it
@@ -1128,6 +1153,7 @@ pub fn run() {
         });
     }
             llm::spawn(app.handle().clone(), window.state::<Arc<IslandState>>().inner().clone());
+            clock::spawn(window.state::<Arc<IslandState>>().inner().clone());
             notify_listener::spawn(app.handle().clone(), window.state::<Arc<IslandState>>().inner().clone());
             notify_listener::spawn_viber(app.handle().clone(), window.state::<Arc<IslandState>>().inner().clone());
 
@@ -1157,6 +1183,10 @@ pub fn run() {
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_secs(5));
                     let state = w.state::<Arc<IslandState>>();
+                    if std::env::var_os("DI_DEMO_TIME").is_some() {
+                        clock::push(&state, false);
+                        return;
+                    }
                     let b = |id: &str, state: &'static str, ctx: f64| notify::Brief { id: id.into(), state, host_icon: "code", host_exe: None, project: "demo".into(), ctx };
                     let mut n = state.notif.lock().unwrap();
                     n.push_brief("Brief-show island queue".into(), b("a", "finished", 0.26));

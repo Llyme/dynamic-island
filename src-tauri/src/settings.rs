@@ -52,6 +52,11 @@ pub struct Settings {
     pub show_eyes: bool,
     /// theme (accent) colour as #rrggbb
     pub accent_color: String,
+    /// the island says what time it is now and then (a session pill)
+    pub time_announce: bool,
+    /// which step of `clock::INTERVALS`
+    pub time_interval: u64,
+    pub time_24h: bool,
     /// 0..100 -- how strongly (and how far) the sound's light bleeds outside the island, 0 = off
     pub audio_bleed: u64,
     pub calendar_ics_url: String,
@@ -90,6 +95,9 @@ impl Default for Settings {
             react_to_audio: true,
             show_eyes: true,
             accent_color: "#5ac88c".into(),
+            time_announce: false,
+            time_interval: 4,
+            time_24h: false,
             audio_bleed: 60,
             calendar_ics_url: String::new(),
             calendar_reminder_lead_min: 15,

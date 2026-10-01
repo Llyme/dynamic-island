@@ -92,6 +92,8 @@
         </div>
         <div id="hub-body">
           <div id="pane-settings" class="hidden">
+            <div id="set-tabs" role="tablist"></div>
+            <div class="set-tab hidden" data-tab="general">
             <div class="hub-section-title">Behavior</div>
             <div class="hub-group spot">
               <label class="hub-row">
@@ -123,7 +125,8 @@
                 <input type="checkbox" id="set-start-with-windows" />
               </label>
             </div>
-
+            </div>
+            <div class="set-tab hidden" data-tab="island">
             <div class="hub-section-title">Island</div>
             <div class="hub-group spot">
               <label class="hub-row">
@@ -133,25 +136,6 @@
               <label class="hub-row">
                 <span>Follow Cursor</span>
                 <input type="checkbox" id="set-cursor-follow" />
-              </label>
-              <div class="hub-row">
-                <span>Theme</span>
-                <span class="hub-row-value swatches" id="set-accent"></span>
-              </div>
-              <label class="hub-row">
-                <span>Eyes</span>
-                <input type="checkbox" id="set-show-eyes" />
-              </label>
-              <label class="hub-row">
-                <span>Sound</span>
-                <input type="checkbox" id="set-react-to-audio" />
-              </label>
-              <label class="hub-row">
-                <span>Ambient</span>
-                <span class="hub-row-value">
-                  <input type="range" id="set-audio-bleed" data-default="60" min="0" max="100" step="5" />
-                  <span id="set-audio-bleed-label"></span>
-                </span>
               </label>
               <label class="hub-row">
                 <span>Hover Delay</span>
@@ -202,6 +186,30 @@
                   <span id="set-peek-duration-label"></span>
                 </span>
               </label>
+            </div>
+            </div>
+            <div class="set-tab hidden" data-tab="look">
+            <div class="hub-section-title">Look</div>
+            <div class="hub-group spot">
+              <div class="hub-row">
+                <span>Theme</span>
+                <span class="hub-row-value swatches" id="set-accent"></span>
+              </div>
+              <label class="hub-row">
+                <span>Eyes</span>
+                <input type="checkbox" id="set-show-eyes" />
+              </label>
+              <label class="hub-row">
+                <span>Sound</span>
+                <input type="checkbox" id="set-react-to-audio" />
+              </label>
+              <label class="hub-row">
+                <span>Ambient</span>
+                <span class="hub-row-value">
+                  <input type="range" id="set-audio-bleed" data-default="60" min="0" max="100" step="5" />
+                  <span id="set-audio-bleed-label"></span>
+                </span>
+              </label>
               <label class="hub-row">
                 <span>Glow</span>
                 <span class="hub-row-value">
@@ -210,7 +218,8 @@
                 </span>
               </label>
             </div>
-
+            </div>
+            <div class="set-tab hidden" data-tab="background">
             <div class="hub-section-title">Background</div>
             <div class="hub-group spot">
               <div class="hub-row">
@@ -238,7 +247,34 @@
               </label>
               <div class="hub-row hub-row-note" id="bg-error"></div>
             </div>
-
+            </div>
+            <div class="set-tab hidden" data-tab="time">
+            <div class="hub-section-title">Time</div>
+            <div class="hub-group spot">
+              <label class="hub-row">
+                <span>Announce</span>
+                <input type="checkbox" id="set-time-announce" />
+              </label>
+              <label class="hub-row">
+                <span>Every</span>
+                <span class="hub-row-value">
+                  <input type="range" id="set-time-interval" data-default="4" min="0" max="7" step="1" />
+                  <span id="set-time-interval-label"></span>
+                </span>
+              </label>
+              <label class="hub-row">
+                <span>Military</span>
+                <input type="checkbox" id="set-time-24h" />
+              </label>
+              <div class="hub-row">
+                <span>Preview</span>
+                <span class="hub-row-value">
+                  <button class="hub-btn" id="time-preview" type="button">Show now</button>
+                </span>
+              </div>
+            </div>
+            </div>
+            <div class="set-tab hidden" data-tab="calendar">
             <div class="hub-section-title">Calendar</div>
             <div class="hub-group spot">
               <div class="hub-row hub-row-stack">
@@ -255,6 +291,7 @@
                   <span id="set-calendar-lead-label"></span>
                 </span>
               </label>
+            </div>
             </div>
           </div>
 

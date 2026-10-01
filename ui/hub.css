@@ -2639,3 +2639,62 @@ svg.li {
   opacity: 1;
   box-shadow: 0 0 0 2px #0b0b0d, 0 0 0 3.5px rgba(255, 255, 255, 0.55);
 }
+
+/* ---- the settings tabs: a row of icons ---- */
+#set-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin: 2px 0 4px;
+}
+
+#set-tabs button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.2s ease, transform 0.3s var(--spring);
+}
+
+#set-tabs button .li {
+  width: 16px;
+  height: 16px;
+}
+
+#set-tabs button:hover {
+  color: var(--fg);
+  transform: translateY(-1px);
+}
+
+#set-tabs button.on {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+.set-tab.hidden {
+  display: none;
+}
+
+
+.media-jump.hidden {
+  display: none;
+}
+
+/* a card with nothing more to show when opened: always as open as it gets (its sub-line shows), no chevron */
+.now-card.collapsible.flat-card .card-toggle {
+  display: none;
+}
+
+.now-card.collapsible.flat-card:not(.open) .now-sub {
+  display: block;
+}
+
+.now-card.flat-card .now-peek {
+  display: none;
+}

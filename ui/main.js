@@ -6,6 +6,34 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
+// ---- the island is not a web page: nothing of the browser should work on it ----
+// (the webview's own accelerators, devtools, zoom and menus are switched off in Rust; this covers
+// what is left: the keys, the wheel, files dropped on it, dragged links and images, middle click)
+const BLOCKED_KEYS = /^(F\d{1,2}|BrowserBack|BrowserForward|BrowserRefresh|BrowserSearch|BrowserHome|PrintScreen)$/;
+const BLOCKED_CTRL = /^[rpsufgjhdnotwebk\-=+0\[\]]$/i; // ctrl + any of these is a browser command; a, c, v, x, z, y stay
+window.addEventListener(
+  "keydown",
+  (e) => {
+    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+    const block =
+      BLOCKED_KEYS.test(e.key) ||
+      ((e.ctrlKey || e.metaKey) && BLOCKED_CTRL.test(e.key)) ||
+      (e.ctrlKey && e.shiftKey && /^[ijcnrdtw]$/i.test(e.key)) ||
+      (e.altKey && /^(ArrowLeft|ArrowRight|Home)$/.test(e.key)) ||
+      (e.key === "Backspace" && !typing && !e.target.isContentEditable);
+    if (block) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  },
+  true,
+);
+window.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+for (const t of ["dragstart", "dragover", "drop", "gesturestart", "gesturechange", "auxclick"]) {
+  window.addEventListener(t, (e) => e.preventDefault(), { passive: false });
+}
+window.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); }, true); // no autoscroll
+
 const pill = document.getElementById("pill");
 const canvas = document.getElementById("face");
 const ctx = canvas.getContext("2d");
@@ -615,6 +643,7 @@ const ICON = {
 
 // ---- line icons used across the island: one stroke style, coloured by the text around them ----
 const LI_PATHS = {
+  island: "M5 5.5h6a2.5 2.5 0 0 1 0 5H5a2.5 2.5 0 0 1 0-5z",
   palette: "M8 2.5a5.5 5.5 0 1 0 0 11c.9 0 1.2-.7.8-1.3-.4-.6 0-1.4.8-1.4h1.4a2 2 0 0 0 2-2A5.5 5.5 0 0 0 8 2.5zM5 8h.01M7 5.5h.01M10 5.5h.01",
   reset: "M3.2 8a4.8 4.8 0 1 0 1.5-3.5M3 2.8v2.4h2.4",
   gamepad: "M4.6 5.5h6.8a3 3 0 0 1 2.9 3.7l-.6 2.3a1.5 1.5 0 0 1-2.6.5L10 10.5H6l-1.1 1.5a1.5 1.5 0 0 1-2.6-.5l-.6-2.3a3 3 0 0 1 2.9-3.7zM5.2 7.3v2.6M3.9 8.6h2.6M10.6 7.8h.01M12.1 9.3h.01",
@@ -751,7 +780,8 @@ function playUsagePeek() {
 const vizCanvas = document.getElementById("viz");
 const vizCtx = vizCanvas.getContext("2d");
 const VIZ_SCALE = 0.7; // render below device resolution: it's all soft glow anyway
-const viz = { rings: [], hue: 150, on: false, lastSyl: 0, lastBreath: 0 };
+const viz = { rings: [], hue: 150, on: false, lastSyl: 0, lastBreath: 0, fadeFrom: null };
+const VIZ_FADE_MS = 700;
 
 // the aura also bleeds outside the island into the window's margin (settings: Ambient, 0 = off)
 const bleedCanvas = document.getElementById("viz-bleed");
@@ -766,30 +796,44 @@ function sizeViz() {
   bleedCanvas.height = Math.max(1, Math.round(window.innerHeight * VIZ_SCALE));
 }
 
+// The light outside the island is the aura (see paintViz) drawn once over the island's shape and
+// kept where a soft mask lets it through: bright at the island's edge, gone a few pixels away, so it
+// reads as light spilling out, never as a slab. The mask is only rebuilt when the island's shape
+// changes (while it resizes), not every frame.
+const maskCanvas = document.createElement("canvas");
+const maskCtx = maskCanvas.getContext("2d");
+let maskKey = "";
 function paintBleed() {
   const r = pill.getBoundingClientRect();
   const S = VIZ_SCALE;
   // reach follows the setting (it can never go past the margin the window has)
-  // (the blur spreads it about twice as far again: half the margin is left for that,
-  // or the glow would be cut off by the window's edge)
   const reach = Math.min(cursorPad * 0.5, 24) * bleedLevel;
+  const grow = reach * 0.3;
+  const x = (r.left - grow) * S;
+  const y = (r.top - grow) * S;
+  const w = (r.width + 2 * grow) * S;
+  const h = (r.height + 2 * grow) * S;
+  const radius = Math.min(((parseFloat(getComputedStyle(pill).borderTopLeftRadius) || 0) + grow) * S, w / 2, h / 2);
+  const blur = Math.max(0.5, reach * 0.5 * S);
+  const key = [x, y, w, h, radius, blur, bleedCanvas.width, bleedCanvas.height].map((v) => Math.round(v * 10)).join();
+  if (key !== maskKey) {
+    maskKey = key;
+    maskCanvas.width = bleedCanvas.width;
+    maskCanvas.height = bleedCanvas.height;
+    maskCtx.filter = `blur(${blur}px)`;
+    maskCtx.fillStyle = "#fff";
+    maskCtx.beginPath();
+    maskCtx.roundRect(x, y, w, h, radius);
+    maskCtx.fill();
+    maskCtx.filter = "none";
+  }
   bleedCtx.setTransform(1, 0, 0, 1, 0, 0);
+  bleedCtx.globalCompositeOperation = "source-over";
   bleedCtx.clearRect(0, 0, bleedCanvas.width, bleedCanvas.height);
-  // the aura inside is faint (it sits under content): stack it a few times so the bleed reads
-  // the light takes the island's own shape: clipped to its rounded outline, grown by the reach
-  const x = (r.left - reach) * S;
-  const y = (r.top - reach) * S;
-  const w = (r.width + 2 * reach) * S;
-  const h = (r.height + 2 * reach) * S;
-  const radius = Math.min((parseFloat(getComputedStyle(pill).borderTopLeftRadius) || 0) + reach, r.height / 2 + reach) * S;
-  bleedCtx.save();
-  bleedCtx.beginPath();
-  bleedCtx.roundRect(x, y, w, h, Math.min(radius, w / 2, h / 2));
-  bleedCtx.clip();
-  bleedCtx.globalCompositeOperation = "lighter";
-  bleedCtx.globalAlpha = Math.min(1, bleedLevel * 1.25);
-  for (let i = 0; i < 3; i++) bleedCtx.drawImage(vizCanvas, x, y, w, h);
-  bleedCtx.restore();
+  bleedCtx.drawImage(vizCanvas, x, y, w, h);
+  bleedCtx.globalCompositeOperation = "destination-in";
+  bleedCtx.drawImage(maskCanvas, 0, 0);
+  bleedCtx.globalCompositeOperation = "source-over";
 }
 
 function clearBleed() {
@@ -852,12 +896,24 @@ function paintViz(now, dt) {
   const live = audio.level > 0.03 || viz.rings.length > 0;
   if (!live) {
     if (viz.on) {
+      // the sound stopped: the light fades out over a moment instead of vanishing
+      if (viz.fadeFrom === null) viz.fadeFrom = now;
+      const f = 1 - (now - viz.fadeFrom) / VIZ_FADE_MS;
+      if (f > 0) {
+        vizCanvas.style.opacity = String(f);
+        bleedCanvas.style.opacity = String(Math.min(1, bleedLevel * 1.1) * f);
+        return;
+      }
       c.clearRect(0, 0, w, h);
       viz.on = false;
+      viz.fadeFrom = null;
+      vizCanvas.style.opacity = "";
       clearBleed();
     }
     return;
   }
+  viz.fadeFrom = null;
+  vizCanvas.style.opacity = "";
   viz.on = true;
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.clearRect(0, 0, w, h);
@@ -901,7 +957,7 @@ function paintViz(now, dt) {
 
   if (chill > 0.04) {
     const showGain = currentView === "hub" ? 0.6 : currentView === "idle" ? 1 : 0.8;
-    paintChillGradient(c, w, h, now, chill * showGain, currentView === "hub");
+    paintChillGradient(c, w, h, now, chill * showGain * Math.min(1, audio.level / 0.25), currentView === "hub"); // (follows the loudness: quiet = dim, not a constant wash)
   }
 
   // voice: a warm halo breathing with the syllables, plus a soft ripple per syllable
@@ -963,7 +1019,10 @@ function paintViz(now, dt) {
   c.globalCompositeOperation = "source-over";
   const bleeding = bleedLevel > 0 && cursorPad > 0;
   document.body.classList.toggle("bleeding", bleeding);
-  if (bleeding) paintBleed();
+  if (bleeding) {
+    bleedCanvas.style.opacity = String(Math.min(1, bleedLevel * 1.1));
+    paintBleed();
+  }
 }
 
 let lastFrameT = performance.now();
@@ -1216,7 +1275,8 @@ const hubTimeEl = document.getElementById("hub-time");
 const hubDateEl = document.getElementById("hub-date");
 function updateClock() {
   const now = new Date();
-  const t = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // military time (Settings > Time) shows it as 15:30
+  const t = now.toLocaleTimeString([], currentSettings?.time_24h ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } : { hour: "numeric", minute: "2-digit" });
   if (hubTimeEl.textContent !== t) hubTimeEl.textContent = t;
   hubDateEl.textContent = now.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
 }
@@ -1461,16 +1521,29 @@ let briefCurrent = null;
 function showBrief(n) {
   const b = n.brief;
   briefCurrent = b;
-  briefTitle.textContent = n.title;
-  briefTile.style.setProperty("--c", LLM_COLOR.claude);
-  briefTile.innerHTML = `${LLM_LETTER.claude}<svg class="cr" viewBox="0 0 40 40"><circle class="rb" cx="20" cy="20" r="18"/><circle class="rf" cx="20" cy="20" r="18"/></svg>`;
-  const rf = briefTile.querySelector(".rf");
-  rf.style.strokeDasharray = String(LLM_RING_C);
-  rf.style.strokeDashoffset = String(LLM_RING_C * (1 - b.ctx));
-  rf.style.stroke = llmCtxColor(b.ctx);
-  const host = el("span", "llm-host");
-  host.innerHTML = li(b.host_icon);
-  briefRight.replaceChildren(host, llmStateIcon(b.state));
+  briefEl.classList.toggle("brief-time", b.state === "time");
+  if (b.state === "time") {
+    // the time announcement: big light digits glowing in the theme colour, a blinking colon, nothing else
+    const m = /^(\d+):(\d+)(?:\s*(AM|PM))?$/i.exec(n.title);
+    briefTitle.replaceChildren();
+    if (m) {
+      briefTitle.append(el("span", "", m[1]), el("span", "time-sep", ":"), el("span", "", m[2]));
+      if (m[3]) briefTitle.append(el("small", "time-suf", m[3].toUpperCase()));
+    } else {
+      briefTitle.textContent = n.title;
+    }
+  } else {
+    briefTitle.textContent = n.title;
+    briefTile.style.setProperty("--c", LLM_COLOR.claude);
+    briefTile.innerHTML = `${LLM_LETTER.claude}<svg class="cr" viewBox="0 0 40 40"><circle class="rb" cx="20" cy="20" r="18"/><circle class="rf" cx="20" cy="20" r="18"/></svg>`;
+    const rf = briefTile.querySelector(".rf");
+    rf.style.strokeDasharray = String(LLM_RING_C);
+    rf.style.strokeDashoffset = String(LLM_RING_C * (1 - b.ctx));
+    rf.style.stroke = llmCtxColor(b.ctx);
+    const host = el("span", "llm-host");
+    host.innerHTML = li(b.host_icon);
+    briefRight.replaceChildren(host, llmStateIcon(b.state));
+  }
   document.body.dataset.brief = b.state;
   // already a brief on screen (the queue moved on): the glow and the entrance start again
   if (currentView === "brief") {
@@ -1483,6 +1556,10 @@ function showBrief(n) {
 briefEl.addEventListener("mousedown", (e) => e.stopPropagation());
 briefEl.addEventListener("click", () => {
   if (!briefCurrent) return;
+  if (briefCurrent.state === "time") {
+    invoke("open_notification_action", { action: "brief" }); // just closes it
+    return;
+  }
   invoke("focus_source", { exePath: briefCurrent.host_exe, titleHint: briefCurrent.project });
   if (briefCurrent.state === "finished") invoke("llm_dismiss", { id: briefCurrent.id });
   invoke("open_notification_action", { action: "brief" }); // ends the pill
@@ -1588,6 +1665,9 @@ const hubEl = document.getElementById("hub");
     "set-show-at-cursor": "cursor",
     "set-cursor-follow": "follow",
     "set-show-eyes": "eye",
+    "set-time-announce": "clock",
+    "set-time-interval": "follow",
+    "set-time-24h": "clock",
     "set-accent": "palette",
     "set-react-to-audio": "wave",
     "set-audio-bleed": "sun",
@@ -1632,6 +1712,9 @@ const hubEl = document.getElementById("hub");
     "set-show-at-cursor": "Appear under the cursor",
     "set-cursor-follow": "Follow the cursor along the top edge",
     "set-show-eyes": "Show the eyes (the sound light stays either way)",
+    "set-time-announce": "Tell the time now and then, as a pill",
+    "set-time-interval": "How often the time is announced (on the clock: every 30 minutes means :00 and :30)",
+    "set-time-24h": "Military time (24-hour clock: 15:30 instead of 3:30 PM)",
     "set-accent": "Theme colour",
     "set-react-to-audio": "Eyes react to sound",
     "set-audio-bleed": "Sound light bleeding outside the island: strength and reach (0 = off)",
@@ -1676,6 +1759,12 @@ const setIdleHideDelayLabel = document.getElementById("set-idle-hide-delay-label
 const setShowAtCursor = document.getElementById("set-show-at-cursor");
 const setReactToAudio = document.getElementById("set-react-to-audio");
 const setShowEyes = document.getElementById("set-show-eyes");
+const setTimeAnnounce = document.getElementById("set-time-announce");
+const setTimeInterval = document.getElementById("set-time-interval");
+const setTimeIntervalLabel = document.getElementById("set-time-interval-label");
+const setTime24h = document.getElementById("set-time-24h");
+const TIME_STEPS = ["5 min", "10 min", "15 min", "30 min", "1 h", "2 h", "3 h", "6 h"];
+document.getElementById("time-preview").addEventListener("click", () => invoke("time_preview"));
 // the theme colour: a handful of swatches; the accent of the hub, the glow and the pills follows
 const ACCENTS = ["#5ac88c", "#4cc9c0", "#5aa9f0", "#a487ee", "#ee7fb5", "#e8776f", "#ee9a4d", "#e3c457", "#e8e8ee"];
 let accentColor = ACCENTS[0];
@@ -1749,6 +1838,10 @@ async function loadSettingsIntoForm() {
   setCursorFollow.checked = currentSettings.cursor_follow;
   setReactToAudio.checked = currentSettings.react_to_audio;
   setShowEyes.checked = currentSettings.show_eyes ?? true;
+  setTimeAnnounce.checked = currentSettings.time_announce ?? false;
+  setTimeInterval.value = currentSettings.time_interval ?? 4;
+  setTimeIntervalLabel.textContent = TIME_STEPS[Number(setTimeInterval.value)];
+  setTime24h.checked = currentSettings.time_24h ?? false;
   applyAccent(currentSettings.accent_color);
   showEyes = setShowEyes.checked;
   setCompactWidth.value = currentSettings.compact_width ?? 260;
@@ -1820,6 +1913,9 @@ function saveSettingsFromForm() {
     cursor_follow: setCursorFollow.checked,
     react_to_audio: setReactToAudio.checked,
     show_eyes: setShowEyes.checked,
+    time_announce: setTimeAnnounce.checked,
+    time_interval: Number(setTimeInterval.value),
+    time_24h: setTime24h.checked,
     peek_duration_s: Number(setPeekDuration.value),
     edge_dwell_ms: Number(setEdgeDwell.value),
     pin_shrink: Number(setPinShrink.value),
@@ -1834,10 +1930,11 @@ function saveSettingsFromForm() {
   };
   showEyes = setShowEyes.checked;
   currentSettings.accent_color = accentColor;
+  updateClock();
   invoke("save_settings", { settings: currentSettings });
 }
 
-for (const el of [setGameDetection, setWorkDetection, setDownloadDetection, setLlmDetection, setLlmBrief, setPagePreview, setStartWithWindows, setShowAtCursor, setCursorFollow, setReactToAudio, setShowEyes]) {
+for (const el of [setGameDetection, setWorkDetection, setDownloadDetection, setLlmDetection, setLlmBrief, setPagePreview, setStartWithWindows, setShowAtCursor, setCursorFollow, setReactToAudio, setShowEyes, setTimeAnnounce, setTime24h]) {
   el.addEventListener("change", saveSettingsFromForm);
 }
 setIdleHideDelay.addEventListener("input", () => {
@@ -1856,6 +1953,52 @@ setTopMargin.addEventListener("input", () => {
   setTopMarginLabel.textContent = `${setTopMargin.value}px`;
 });
 setTopMargin.addEventListener("change", saveSettingsFromForm);
+setTimeInterval.addEventListener("input", () => {
+  setTimeIntervalLabel.textContent = TIME_STEPS[Number(setTimeInterval.value)];
+});
+setTimeInterval.addEventListener("change", saveSettingsFromForm);
+
+// ---- the settings tabs: icons only, the name on hover ----
+const SET_TABS = [
+  { id: "general", icon: "sliders", tip: "General" },
+  { id: "island", icon: "island", tip: "Island" },
+  { id: "look", icon: "palette", tip: "Look" },
+  { id: "background", icon: "image", tip: "Background" },
+  { id: "time", icon: "clock", tip: "Time" },
+  { id: "calendar", icon: "calendar", tip: "Calendar" },
+];
+function showSettingsTab(id) {
+  for (const p of document.querySelectorAll("#pane-settings .set-tab")) p.classList.toggle("hidden", p.dataset.tab !== id);
+  for (const b of document.querySelectorAll("#set-tabs button")) {
+    b.classList.toggle("on", b.dataset.tab === id);
+    b.setAttribute("aria-selected", String(b.dataset.tab === id));
+  }
+  try {
+    localStorage.setItem("nadi.settingsTab", id);
+  } catch (_) {}
+  scheduleHubHeight();
+}
+{
+  const bar = document.getElementById("set-tabs");
+  for (const t of SET_TABS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.tab = t.id;
+    b.dataset.tip = t.tip;
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-label", t.tip);
+    b.innerHTML = li(t.icon);
+    b.addEventListener("mousedown", (e) => e.stopPropagation());
+    b.addEventListener("click", () => showSettingsTab(t.id));
+    bar.append(b);
+  }
+  let first = "general";
+  try {
+    const saved = localStorage.getItem("nadi.settingsTab");
+    if (SET_TABS.some((t) => t.id === saved)) first = saved;
+  } catch (_) {}
+  showSettingsTab(first);
+}
 setPinShrink.addEventListener("input", () => {
   setPinShrinkLabel.textContent = pinShrinkText(setPinShrink.value);
 });
@@ -2451,16 +2594,20 @@ function applyHubMedia(m) {
   hubMediaDuration = m.duration || 0;
   hubMediaSeek.classList.toggle("hidden", !(hubMediaDuration > 0));
   // jump buttons need a player that takes seeks; the speed slider one that takes a speed
-  hubMediaBack.disabled = hubMediaFwd.disabled = !m.can_seek;
+  hubMediaBack.classList.toggle("hidden", !m.can_seek);
+  hubMediaFwd.classList.toggle("hidden", !m.can_seek);
   // the speed dropdown only exists for a player that takes a speed
   hubMediaRate.classList.toggle("hidden", !m.can_rate);
   if (!m.can_rate) hubMediaRates.classList.add("hidden");
   hubMediaRateNow = m.rate || 1;
   hubMediaRateLabel.textContent = rateText(hubMediaRateNow);
   for (const o of hubMediaRates.children) o.classList.toggle("on", Math.abs(Number(o.dataset.rate) - hubMediaRateNow) < 0.01);
+  // nothing to show in the row (no jumps, no speed, no seek bar): the row goes
+  document.getElementById("hub-media-extra").classList.toggle("hidden", !(m.can_seek || m.can_rate || hubMediaDuration > 0));
   if (hubMediaDuration > 0) {
     hubMediaSeekFill.style.width = `${Math.min(100, ((m.position || 0) / hubMediaDuration) * 100)}%`;
   }
+  hubMediaEl._syncBody?.(); // nothing to open to (no seek bar, jumps or speed): not expandable
 }
 
 for (const btn of [hubMediaPlay, hubMediaPrev, hubMediaNext, hubMediaSeek, hubMediaBack, hubMediaFwd, hubMediaRate, hubMediaRates]) {
@@ -2471,11 +2618,11 @@ hubMediaEl.classList.add("clickable");
 collapsible(hubMediaEl, "media");
 hubMediaEl.addEventListener("mousedown", (e) => e.stopPropagation());
 hubMediaEl.addEventListener("click", (e) => {
-  if (e.target.closest("button, #hub-media-seek, .now-row")) return; // the header toggles the card
+  if (e.target.closest("button, #hub-media-seek") || (e.target.closest(".now-row") && !hubMediaEl.classList.contains("flat-card"))) return; // the header toggles the card
   invoke("focus_source", { titleHint: hubMediaTitleText, sourceId: hubMediaSource });
 });
 hubMediaEl.addEventListener("dblclick", (e) => {
-  if (hubMediaEl._inHeader(e)) invoke("focus_source", { titleHint: hubMediaTitleText, sourceId: hubMediaSource });
+  if (!hubMediaEl.classList.contains("flat-card") && hubMediaEl._inHeader(e)) invoke("focus_source", { titleHint: hubMediaTitleText, sourceId: hubMediaSource });
 });
 hubMediaPlay.addEventListener("click", () => invoke("media_play_pause"));
 hubMediaPrev.addEventListener("click", () => invoke("media_previous"));
@@ -2583,8 +2730,17 @@ function collapsible(card, key) {
     const r = row.getBoundingClientRect();
     return e.clientY <= r.bottom + 12;
   };
+  // a card with nothing more to show when opened (no body, no seek bar...) is not expandable: no
+  // chevron, and its header goes to the app like the rest of the card (see .flat-card)
+  card._syncBody = () => {
+    const bodies = [...card.querySelectorAll(".work-body")].some((b) => b.children.length > 0 || b.textContent.trim());
+    const more = bodies || card.querySelector(".dl-list, .now-seek:not(.hidden), .media-extra:not(.hidden)");
+    card.classList.toggle("flat-card", !more);
+    if (!more) card.classList.remove("open");
+  };
+  card._syncBody();
   card.addEventListener("click", (e) => {
-    if (!card._inHeader(e)) return;
+    if (card.classList.contains("flat-card") || !card._inHeader(e)) return;
     e.stopImmediatePropagation(); // not "go to the app"
     const open = card.classList.toggle("open");
     if (open) openCards.add(key);
@@ -2612,10 +2768,10 @@ function focusable(card, args, go = () => invoke("focus_source", args)) {
   // the header opens/closes the card (see collapsible); the rest of the card, or a
   // double-click on the header, goes to the app
   card.addEventListener("click", (e) => {
-    if (!(card._inHeader ? card._inHeader(e) : e.target.closest(".now-row"))) go();
+    if (card.classList.contains("flat-card") || !(card._inHeader ? card._inHeader(e) : e.target.closest(".now-row"))) go();
   });
   card.addEventListener("dblclick", (e) => {
-    if (card._inHeader ? card._inHeader(e) : e.target.closest(".now-row")) go();
+    if (!card.classList.contains("flat-card") && (card._inHeader ? card._inHeader(e) : e.target.closest(".now-row"))) go();
   });
   return card;
 }
